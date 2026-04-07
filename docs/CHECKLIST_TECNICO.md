@@ -4,164 +4,200 @@
 Este checklist descompone `TODO.md` y `PLAN_IMPLEMENTACION.md` en tareas concretas por archivo, módulo y componente. Si algún archivo aún no existe, debe crearse con esta estructura o una equivalente que mantenga la misma separación de responsabilidades.
 
 ## 1. Base del proyecto
-- [ ] `src/main.jsx`
-  - [ ] montar la app
-  - [ ] registrar providers globales
+- [x] `src/main.jsx`
+  - [x] montar la app
+  - [x] registrar providers globales
   - [ ] registrar service worker si se implementa PWA
-- [ ] `src/App.jsx`
-  - [ ] definir layout principal
-  - [ ] montar navegación inferior
-  - [ ] resolver cambio de vistas y transiciones
+- [x] `src/App.jsx`
+  - [x] definir layout principal
+  - [x] montar navegación inferior
+  - [x] resolver cambio de vistas y transiciones
 - [ ] `src/index.css`
-  - [ ] definir tokens de color obligatorios
-  - [ ] asegurar base mobile-first
+  - [x] definir tokens de color obligatorios
+  - [x] asegurar base mobile-first
   - [ ] incluir reglas `@media print`
-- [ ] `src/App.css`
-  - [ ] estilos del shell general
-  - [ ] utilidades de layout y animación
+- [x] `src/App.css`
+  - [x] estilos del shell general
+  - [x] utilidades de layout y animación
 
-## 2. Estructura recomendada a crear
-- [ ] `src/data/seed.js`
-- [ ] `src/lib/storage.js`
+## 2. Backend SQLite y scripts
+- [x] `server/db/migrations/001_initial_schema.sql`
+  - [x] definir tablas núcleo según `TODO.md`
+  - [x] añadir índices necesarios
+  - [x] añadir vistas de ranking reutilizables
+- [x] `server/db/seeds/001_seed_data.sql`
+  - [x] insertar usuarios
+  - [x] insertar grupo y miembros
+  - [x] insertar restaurantes, categorías y tipos
+  - [x] insertar 10 dish entries de prueba
+- [x] `server/db/data/.gitkeep`
+  - [x] mantener versionada la carpeta local de runtime sin subir el `.sqlite`
+- [x] `scripts/db/init.sh`
+  - [x] crear base local y aplicar esquema
+- [x] `scripts/db/seed.sh`
+  - [x] cargar seed reproducible
+- [x] `scripts/db/reset.sh`
+  - [x] recrear base de datos
+- [x] `scripts/db/verify.sh`
+  - [x] listar tablas y conteos básicos
+- [x] `server/app.js`
+  - [x] exponer endpoints de lectura desde SQLite
+  - [x] devolver JSON válido para bootstrap del frontend
+  - [x] manejar CORS, errores y healthcheck
+- [x] `docs/ARQUITECTURA_SQLITE.md`
+  - [x] documentar rutas, comandos y decisiones
+
+## 3. Estructura recomendada a crear
+- [x] `src/data/seed.js`
+- [x] `src/lib/storage.js`
 - [ ] `src/lib/validation.js`
-- [ ] `src/lib/scoring.js`
-- [ ] `src/lib/ranking.js`
-- [ ] `src/lib/maps.js`
+- [x] `src/lib/scoring.js`
+- [x] `src/lib/ranking.js`
+- [x] `src/lib/filters.js`
+- [x] `src/lib/maps.js`
 - [ ] `src/lib/images.js`
-- [ ] `src/lib/format.js`
-- [ ] `src/hooks/useAppState.js`
-- [ ] `src/hooks/usePersistentState.js`
+- [x] `src/lib/format.js`
+- [x] `src/hooks/useAppState.js`
+- [x] `src/hooks/usePersistentState.js`
 - [ ] `src/hooks/useToast.js`
-- [ ] `src/components/layout/BottomNav.jsx`
-- [ ] `src/components/layout/FloatingActionButton.jsx`
-- [ ] `src/components/feedback/ToastCenter.jsx`
-- [ ] `src/components/feedback/LoadingOverlay.jsx`
-- [ ] `src/components/map/MapView.jsx`
-- [ ] `src/components/map/Pin.jsx`
-- [ ] `src/components/map/RestaurantMiniMap.jsx`
-- [ ] `src/components/rankings/RankingList.jsx`
-- [ ] `src/components/rankings/RankingCard.jsx`
-- [ ] `src/components/filters/FilterPanel.jsx`
-- [ ] `src/components/forms/RestaurantForm.jsx`
-- [ ] `src/components/forms/AddDishWizard.jsx`
+- [x] `src/components/layout/BottomNav.jsx`
+- [x] `src/components/layout/FloatingActionButton.jsx`
+- [x] `src/components/feedback/ToastCenter.jsx`
+- [x] `src/components/feedback/LoadingOverlay.jsx`
+- [x] `src/components/map/MapView.jsx`
+- [x] `src/components/map/Pin.jsx`
+- [x] `src/components/map/RestaurantMiniMap.jsx`
+- [x] `src/components/rankings/RankingList.jsx`
+- [x] `src/components/rankings/RankingCard.jsx`
+- [x] `src/components/filters/FilterPanel.jsx`
+- [x] `src/components/forms/RestaurantForm.jsx`
+- [x] `src/components/forms/AddDishWizard.jsx`
 - [ ] `src/components/forms/ImageInput.jsx`
-- [ ] `src/components/forms/ScoreInput.jsx`
-- [ ] `src/screens/HomeScreen.jsx`
-- [ ] `src/screens/RankingsScreen.jsx`
-- [ ] `src/screens/MapScreen.jsx`
-- [ ] `src/screens/ListsScreen.jsx`
-- [ ] `src/screens/ProfileScreen.jsx`
+- [x] `src/components/forms/ScoreInput.jsx`
+- [x] `src/screens/HomeScreen.jsx`
+- [x] `src/screens/RankingsScreen.jsx`
+- [x] `src/screens/MapScreen.jsx`
+- [x] `src/screens/ListsScreen.jsx`
+- [x] `src/screens/ProfileScreen.jsx`
 - [ ] `src/screens/ReportScreen.jsx`
 
-## 3. Estado global y persistencia
-- [ ] `src/lib/storage.js`
-  - [ ] guardar y leer base completa
-  - [ ] versionar esquema si hace falta migración
-  - [ ] envolver escrituras en `try/catch`
-- [ ] `src/hooks/useAppState.js`
-  - [ ] exponer usuarios, grupos, restaurantes, categorías, platos y filtros
-  - [ ] centralizar acciones de alta, edición y borrado
-  - [ ] mostrar feedback global
-- [ ] `src/data/seed.js`
-  - [ ] crear Patricia y Carlos
-  - [ ] crear grupo inicial
-  - [ ] crear restaurantes, categorías, tipos y 10 entradas
+## 4. Estado global y persistencia
+- [x] `src/lib/storage.js`
+  - [x] encapsular `localStorage` para estado de UI
+  - [x] envolver lecturas y escrituras en `try/catch`
+- [x] `src/lib/api.js`
+  - [x] timeout de peticiones
+  - [x] bootstrap remoto desde API local
+- [x] `src/hooks/useAppState.js`
+  - [x] exponer usuarios, grupos, restaurantes, categorías, platos y filtros
+  - [x] centralizar acciones de alta, edición y borrado
+  - [x] mostrar feedback global
+- [x] `src/data/seed.js`
+  - [x] reflejar los datos que también viven en `server/db/seeds/001_seed_data.sql`
 
-## 4. Lógica de negocio
+## 5. Lógica de negocio
 - [ ] `src/lib/validation.js`
   - [ ] validar campos obligatorios
-  - [ ] bloquear restaurante sin coordenadas
-  - [ ] detectar duplicados
-- [ ] `src/lib/scoring.js`
-  - [ ] calcular `puntuacion_general`
-  - [ ] calcular media por restaurante
-- [ ] `src/lib/ranking.js`
-  - [ ] implementar fórmula oficial de ranking
-  - [ ] ordenar por score, votos y media
-- [ ] `src/lib/format.js`
+  - [x] bloquear restaurante sin coordenadas
+  - [x] detectar duplicados
+- [x] `src/lib/scoring.js`
+  - [x] calcular `puntuacion_general`
+  - [x] calcular media por restaurante
+- [x] `src/lib/ranking.js`
+  - [x] implementar fórmula oficial de ranking
+  - [x] ordenar por score, votos y media
+- [x] `src/lib/format.js`
   - [ ] normalizar nombres
-  - [ ] formatear fechas, moneda y decimales
+  - [x] formatear fechas, moneda y decimales
 
-## 5. Pantallas principales
-- [ ] `src/screens/HomeScreen.jsx`
-  - [ ] buscador hero
-  - [ ] últimos platos
-  - [ ] top por categoría
-  - [ ] restaurantes cercanos
-- [ ] `src/screens/RankingsScreen.jsx`
-  - [ ] contextos mi ranking, grupo y comunidad
-  - [ ] swipe entre tipos
-  - [ ] detalle por entrada
-- [ ] `src/screens/MapScreen.jsx`
-  - [ ] mapa completo
-  - [ ] long-press de 500 ms
-  - [ ] card al tocar pin
-- [ ] `src/screens/ListsScreen.jsx`
-  - [ ] listas filtrables de restaurantes y platos
-- [ ] `src/screens/ProfileScreen.jsx`
-  - [ ] avatar
-  - [ ] estadísticas
-  - [ ] grupos e invitaciones
-  - [ ] ajustes
+## 6. Pantallas principales
+- [x] `src/screens/HomeScreen.jsx`
+  - [x] buscador hero
+  - [x] últimos platos
+  - [x] top por categoría
+  - [x] restaurantes cercanos
+- [x] `src/screens/RankingsScreen.jsx`
+  - [x] contextos mi ranking, grupo y comunidad
+  - [x] swipe entre tipos
+  - [x] detalle por entrada
+- [x] `src/screens/MapScreen.jsx`
+  - [x] mapa completo
+  - [x] long-press de 500 ms
+  - [x] card al tocar pin
+  - [x] centrado inicial por geolocalización con fallback a Valladolid
+  - [x] CTA visible para crear restaurante desde el punto marcado
+- [x] `src/screens/ListsScreen.jsx`
+  - [x] listas filtrables de restaurantes y platos
+- [x] `src/screens/ProfileScreen.jsx`
+  - [x] avatar
+  - [x] estadísticas
+  - [x] grupos e invitaciones
+  - [x] ajustes
+  - [x] preferencia global de estilo de pin
 - [ ] `src/screens/ReportScreen.jsx`
   - [ ] ruta `/informe`
   - [ ] versión imprimible
   - [ ] botón `window.print()`
 
-## 6. Formularios críticos
+## 7. Formularios críticos
 - [ ] `src/components/forms/RestaurantForm.jsx`
-  - [ ] búsqueda con Google Places
-  - [ ] ubicación actual
-  - [ ] mini mapa
+  - [x] búsqueda real de lugares/autocomplete
+  - [x] ubicación actual
+  - [x] mini mapa
+  - [x] recibir coordenadas precargadas desde mapa principal
   - [ ] foto por archivo o URL
-- [ ] `src/components/forms/AddDishWizard.jsx`
-  - [ ] paso 1 restaurante
-  - [ ] paso 2 categoría
-  - [ ] paso 3 tipo de plato
-  - [ ] paso 4 puntuación
-  - [ ] paso 5 detalles
-  - [ ] guardado optimista con retry
-- [ ] `src/components/forms/ScoreInput.jsx`
-  - [ ] slider 0.0–10.0
-  - [ ] entrada manual
-  - [ ] preview en vivo
+- [x] `src/components/forms/AddDishWizard.jsx`
+  - [x] paso 1 restaurante
+  - [x] paso 2 categoría
+  - [x] paso 3 tipo de plato
+  - [x] paso 4 puntuación
+  - [x] paso 5 detalles
+  - [x] guardado optimista con retry
+- [x] `src/components/forms/ScoreInput.jsx`
+  - [x] slider 0.0–10.0
+  - [x] entrada manual
+  - [x] preview en vivo
 - [ ] `src/components/forms/ImageInput.jsx`
   - [ ] toggle archivo o URL
   - [ ] validación de tamaño y formato
   - [ ] compresión cliente si supera 1 MB
 
-## 7. Mapa e integraciones
-- [ ] `src/lib/maps.js`
-  - [ ] cargar Google Maps JS API
-  - [ ] cargar Places API
-  - [ ] fallback si no hay `VITE_GOOGLE_MAPS_API_KEY`
-- [ ] `src/components/map/Pin.jsx`
-  - [ ] pin por score
-  - [ ] pin por categoría
-  - [ ] pin por foto
-  - [ ] pin por precio
-  - [ ] pin por score numérico
-- [ ] clustering y selección visual activa
+## 8. Mapa e integraciones
+- [x] `src/lib/maps.js`
+  - [x] integrar Leaflet
+  - [x] usar teselas OpenStreetMap
+  - [x] fallback de centrado a Valladolid sin permiso de ubicación
+  - [x] añadir proveedor de búsqueda/autocomplete real
+- [x] `src/components/map/Pin.jsx`
+  - [x] pin por score
+  - [x] pin por categoría
+  - [x] pin por foto
+  - [x] pin por precio
+  - [x] pin por score numérico
+- [x] clustering y selección visual activa
+- [x] preferencia global y override por restaurante del estilo de pin
+- [x] ajustar `z-index` para no solapar navegación, modal ni overlays
 
-## 8. Filtros, exportación y share
-- [ ] `src/components/filters/FilterPanel.jsx`
-  - [ ] categoría
-  - [ ] tipo de plato dependiente
-  - [ ] año
-  - [ ] solo con foto
-  - [ ] precio
-  - [ ] autor
-  - [ ] radio por zona
-  - [ ] puntuación mínima
-- [ ] persistir filtros en almacenamiento local
+## 9. Filtros, exportación y share
+- [x] `src/components/filters/FilterPanel.jsx`
+  - [x] categoría
+  - [x] tipo de plato dependiente
+  - [x] año
+  - [x] solo con foto
+  - [x] precio
+  - [x] autor
+  - [x] radio por zona
+  - [x] puntuación mínima
+- [x] persistir filtros en almacenamiento local
 - [ ] crear exportación CSV
 - [ ] generar token de compartir y vista pública read-only
 - [ ] copiar enlace con confirmación visible
 
-## 9. Calidad mínima antes de dar por terminado
+## 10. Calidad mínima antes de dar por terminado
 - [ ] no hay fallos silenciosos
-- [ ] toda acción muestra loading, éxito o error
-- [ ] no hay scroll horizontal en móvil
-- [ ] `npm run lint` pasa
-- [ ] `npm run build` pasa
+- [x] toda acción muestra loading, éxito o error
+- [x] no hay scroll horizontal en móvil
+- [x] `npm run db:verify` pasa
+- [x] `npm run lint` pasa
+- [x] `npm run build` pasa
 - [ ] se cumple el checklist final de `TODO.md`

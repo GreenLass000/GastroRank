@@ -7,9 +7,15 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "api:dev": "node server/app.js",
+    "db:init": "bash scripts/db/init.sh",
+    "db:seed": "bash scripts/db/seed.sh",
+    "db:reset": "bash scripts/db/reset.sh",
+    "db:verify": "bash scripts/db/verify.sh"
   },
   "dependencies": {
+    "leaflet": "^1.9.4",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   },
