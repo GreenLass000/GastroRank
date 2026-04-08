@@ -4,6 +4,7 @@ import { ModalSheet } from '../components/layout/ModalSheet.jsx'
 import { SectionHeader } from '../components/layout/SectionHeader.jsx'
 import { RankingList } from '../components/rankings/RankingList.jsx'
 import { useAppState } from '../hooks/useAppState.js'
+import { createPublicShareToken } from '../lib/api.js'
 import { formatDate, formatRelativePrice, formatScore } from '../lib/format.js'
 import { RANKING_CONTEXTS, RANKING_TYPES } from '../lib/constants.js'
 import { filterEntriesByContext } from '../lib/ranking.js'
@@ -16,6 +17,12 @@ const TYPE_MAP = {
   'Por tipo de plato': 'dishType',
   Global: 'global',
   'Por restaurante': 'restaurant',
+}
+
+const SHARE_CONTEXT_MAP = {
+  private: 'mi_ranking',
+  group: 'grupo',
+  public: 'comunidad',
 }
 
 function getAdjacentRankingType(activeType, direction) {
@@ -121,7 +128,7 @@ function buildDetailState({
   }
 }
 
-export function RankingsScreen() {
+export function RankingsScreen({ onOpenReport }) {
   const {
     activeFilterChips,
     activeFilters,
@@ -131,6 +138,7 @@ export function RankingsScreen() {
     currentGroup,
     currentUser,
     dishTypes,
+    filterOrigin,
     filterOriginLabel,
     filteredDishEntries,
     filteredRankingContexts,
@@ -145,6 +153,8 @@ export function RankingsScreen() {
   const [activeType, setActiveType] = useState('Por tipo de plato')
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
   const [selectedRankingEntry, setSelectedRankingEntry] = useState(null)
+  const [shareStatus, setShareStatus] = useState({ tone: '', message: '' })
+  const [isSharing, setIsSharing] = useState(false)
   const touchStartXRef = useRef(0)
   const isSwipeGestureRef = useRef(false)
 
@@ -156,9 +166,9 @@ export function RankingsScreen() {
         filteredDishEntries,
         activeContext,
         currentUser.id,
-        currentGroup.id,
+        currentGroup?.id ?? null,
       ),
-    [activeContext, currentGroup.id, currentUser.id, filteredDishEntries],
+    [activeContext, currentGroup?.id, currentUser.id, filteredDishEntries],
   )
   const detailState = useMemo(
     () =>
@@ -208,6 +218,38 @@ export function RankingsScreen() {
     window.setTimeout(() => {
       isSwipeGestureRef.current = false
     }, 120)
+  }
+
+  async function handleShareRanking() {
+    setShareStatus({ tone: '', message: '' })
+    setIsSharing(true)
+
+    try {
+      const response = await createPublicShareToken({
+        context: SHARE_CONTEXT_MAP[activeContext],
+        ranking_type: TYPE_MAP[activeType],
+        filters: {
+          ...activeFilters,
+          filterOrigin,
+        },
+        group_id: activeContext === 'group' ? currentGroup?.id ?? null : null,
+        created_by_user_id: currentUser.id,
+      })
+      const shareUrl = `${window.location.origin}/informe?share=${response.shareToken.token}`
+
+      await navigator.clipboard.writeText(shareUrl)
+      setShareStatus({
+        tone: 'success',
+        message: 'Guardado ✅ — Enlace público copiado al portapapeles.',
+      })
+    } catch (error) {
+      setShareStatus({
+        tone: 'error',
+        message: `Error al guardar ❌ — ${error instanceof Error ? error.message : 'No se pudo compartir el ranking.'}`,
+      })
+    } finally {
+      setIsSharing(false)
+    }
   }
 
   return (
@@ -283,6 +325,30 @@ export function RankingsScreen() {
           actionLabel={filtersCount > 0 ? `Filtrar (${filtersCount})` : 'Filtrar'}
           onAction={() => setIsFilterPanelOpen(true)}
         />
+        <div className="pill-row">
+          <button className="pill-button" type="button" onClick={() => onOpenReport?.({
+            contextId: activeContext,
+            filters: activeFilters,
+            filterOrigin,
+            typeKey: TYPE_MAP[activeType],
+          })}>
+            Informe
+          </button>
+          <button
+            className="pill-button"
+            type="button"
+            onClick={handleShareRanking}
+            disabled={isSharing}
+          >
+            {isSharing ? 'Cargando...' : 'Compartir'}
+          </button>
+        </div>
+        {shareStatus.message ? (
+          <div className={`status-banner status-banner--${shareStatus.tone || 'info'}`}>
+            <strong>{shareStatus.tone === 'success' ? 'Estado' : 'Revisión'}</strong>
+            <p>{shareStatus.message}</p>
+          </div>
+        ) : null}
         <RankingList
           entries={rankingItems}
           onSelect={(entry) => {

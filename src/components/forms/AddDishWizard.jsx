@@ -1,7 +1,15 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useAppState } from '../../hooks/useAppState.js'
 import { formatScore } from '../../lib/format.js'
+import { normalizeImageUrl } from '../../lib/images.js'
 import { calculateGeneralScore, getScoreTone } from '../../lib/scoring.js'
+import {
+  normalizeEntityName,
+  validateCategoryPayload,
+  validateDishEntryPayload,
+  validateDishTypePayload,
+} from '../../lib/validation.js'
+import { ImageInput } from './ImageInput.jsx'
 import { RestaurantForm } from './RestaurantForm.jsx'
 import { ScoreInput } from './ScoreInput.jsx'
 
@@ -27,7 +35,8 @@ const INITIAL_FORM = {
   fecha: new Date().toISOString().slice(0, 10),
   visibility: 'private',
   photoMode: 'url',
-  foto_url: '',
+  photoUrlValue: '',
+  photoFileValue: '',
   photoFileName: '',
 }
 
@@ -38,24 +47,49 @@ const SCORE_FIELDS = [
   { key: 'calidad_precio', label: 'Calidad / precio' },
 ]
 
-function normalizeText(value) {
-  return value
-    .trim()
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/\p{Diacritic}/gu, '')
+function buildInitialForm(entryToEdit) {
+  if (!entryToEdit) {
+    return { ...INITIAL_FORM }
+  }
+
+  const photoValue = entryToEdit.foto_url || ''
+  const photoMode = photoValue.startsWith('data:image/') ? 'file' : 'url'
+
+  return {
+    ...INITIAL_FORM,
+    restaurant_id: entryToEdit.restaurant_id || '',
+    categoria_id: entryToEdit.categoria_id || '',
+    tipo_plato_id: entryToEdit.tipo_plato_id || '',
+    nombre_plato: entryToEdit.nombre_plato || '',
+    sabor: typeof entryToEdit.sabor === 'number' ? entryToEdit.sabor : 0,
+    textura: typeof entryToEdit.textura === 'number' ? entryToEdit.textura : 0,
+    presentacion:
+      typeof entryToEdit.presentacion === 'number' ? entryToEdit.presentacion : 0,
+    calidad_precio:
+      typeof entryToEdit.calidad_precio === 'number'
+        ? entryToEdit.calidad_precio
+        : 0,
+    notas: entryToEdit.notas || '',
+    precio_plato:
+      entryToEdit.precio_plato === null || entryToEdit.precio_plato === undefined
+        ? ''
+        : String(entryToEdit.precio_plato),
+    fecha: entryToEdit.fecha || INITIAL_FORM.fecha,
+    visibility: entryToEdit.visibility || 'private',
+    photoMode,
+    photoUrlValue: photoMode === 'url' ? photoValue : '',
+    photoFileValue: photoMode === 'file' ? photoValue : '',
+    photoFileName: '',
+  }
 }
 
-function fileToDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result))
-    reader.onerror = () => reject(new Error('No se pudo leer la imagen seleccionada.'))
-    reader.readAsDataURL(file)
-  })
-}
-
-export function AddDishWizard({ onClose, onOpenRestaurantForm }) {
+export function AddDishWizard({
+  entryToEdit = null,
+  mode = 'create',
+  onClose,
+  onOpenRestaurantForm,
+  onSaved,
+}) {
   const {
     categories,
     createCategory,
@@ -66,9 +100,10 @@ export function AddDishWizard({ onClose, onOpenRestaurantForm }) {
     dishEntries,
     dishTypes,
     restaurants,
+    updateDishEntry,
   } = useAppState()
-  const [activeStep, setActiveStep] = useState(0)
-  const [form, setForm] = useState(INITIAL_FORM)
+  const [activeStep, setActiveStep] = useState(mode === 'edit' ? STEPS.length - 1 : 0)
+  const [form, setForm] = useState(() => buildInitialForm(entryToEdit))
   const [status, setStatus] = useState({ tone: '', message: '' })
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [restaurantQuery, setRestaurantQuery] = useState('')
@@ -78,16 +113,21 @@ export function AddDishWizard({ onClose, onOpenRestaurantForm }) {
   const [categoryDraft, setCategoryDraft] = useState({ nombre: '', icono: '🍽️' })
   const [dishTypeDraft, setDishTypeDraft] = useState({ nombre: '', alias: '' })
 
+  useEffect(() => {
+    setForm(buildInitialForm(entryToEdit))
+    setActiveStep(mode === 'edit' ? STEPS.length - 1 : 0)
+  }, [entryToEdit, mode])
+
   const filteredRestaurants = useMemo(() => {
     if (!restaurantQuery.trim()) {
       return restaurants
     }
 
-    const query = normalizeText(restaurantQuery)
+    const query = normalizeEntityName(restaurantQuery)
     return restaurants.filter((restaurant) =>
-      `${restaurant.nombre} ${restaurant.direccion_texto} ${restaurant.nombre_normalizado}`
-        .toLowerCase()
-        .includes(query),
+      normalizeEntityName(
+        `${restaurant.nombre} ${restaurant.direccion_texto} ${restaurant.nombre_normalizado}`,
+      ).includes(query),
     )
   }, [restaurantQuery, restaurants])
 
@@ -111,6 +151,8 @@ export function AddDishWizard({ onClose, onOpenRestaurantForm }) {
   const recentRestaurants = [...restaurants]
     .sort((left, right) => new Date(right.created_at) - new Date(left.created_at))
     .slice(0, 3)
+  const currentPhotoValue =
+    form.photoMode === 'file' ? form.photoFileValue : form.photoUrlValue
 
   function updateField(name, value) {
     setForm((current) => ({
@@ -167,21 +209,17 @@ export function AddDishWizard({ onClose, onOpenRestaurantForm }) {
   }
 
   async function handleCreateCategory() {
-    if (!categoryDraft.nombre.trim()) {
-      setStatus({
-        tone: 'error',
-        message: 'Error al guardar ❌ — La categoría necesita un nombre.',
-      })
-      return
-    }
-
     try {
-      const response = await createCategory({
-        nombre: categoryDraft.nombre,
-        icono: categoryDraft.icono || '🍽️',
-        scope: 'usuario',
-        created_by_user_id: currentUser.id,
-      })
+      const payload = validateCategoryPayload(
+        {
+          nombre: categoryDraft.nombre,
+          icono: categoryDraft.icono || '🍽️',
+          scope: 'usuario',
+          created_by_user_id: currentUser.id,
+        },
+        categories,
+      )
+      const response = await createCategory(payload)
       selectCategory(response.category.id)
       setCategoryDraft({ nombre: '', icono: '🍽️' })
       setShowCategoryCreator(false)
@@ -194,30 +232,18 @@ export function AddDishWizard({ onClose, onOpenRestaurantForm }) {
   }
 
   async function handleCreateDishType() {
-    if (!form.categoria_id) {
-      setStatus({
-        tone: 'error',
-        message: 'Error al guardar ❌ — Primero selecciona una categoría.',
-      })
-      return
-    }
-
-    if (!dishTypeDraft.nombre.trim()) {
-      setStatus({
-        tone: 'error',
-        message: 'Error al guardar ❌ — El tipo de plato necesita un nombre.',
-      })
-      return
-    }
-
     try {
-      const response = await createDishType({
-        categoria_id: form.categoria_id,
-        nombre: dishTypeDraft.nombre,
-        alias: dishTypeDraft.alias,
-        scope: 'usuario',
-        created_by_user_id: currentUser.id,
-      })
+      const payload = validateDishTypePayload(
+        {
+          categoria_id: form.categoria_id,
+          nombre: dishTypeDraft.nombre,
+          alias: dishTypeDraft.alias,
+          scope: 'usuario',
+          created_by_user_id: currentUser.id,
+        },
+        dishTypes,
+      )
+      const response = await createDishType(payload)
       updateField('tipo_plato_id', response.dishType.id)
       setDishTypeDraft({ nombre: '', alias: '' })
       setShowDishTypeCreator(false)
@@ -229,87 +255,49 @@ export function AddDishWizard({ onClose, onOpenRestaurantForm }) {
     }
   }
 
-  async function handleFileSelected(event) {
-    const file = event.target.files?.[0]
-    if (!file) {
-      return
-    }
-
-    const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic']
-    if (!validTypes.includes(file.type)) {
-      setStatus({
-        tone: 'error',
-        message: 'Error al guardar ❌ — Formato no permitido. Usa jpg, png, webp o heic.',
-      })
-      return
-    }
-
-    if (file.size > 5 * 1024 * 1024) {
-      setStatus({
-        tone: 'error',
-        message: 'Error al guardar ❌ — La imagen supera el límite de 5MB.',
-      })
-      return
-    }
-
-    try {
-      const dataUrl = await fileToDataUrl(file)
-      setForm((current) => ({
-        ...current,
-        foto_url: dataUrl,
-        photoFileName: file.name,
-      }))
-      setStatus({ tone: 'success', message: 'Foto preparada ✅' })
-    } catch (error) {
-      setStatus({
-        tone: 'error',
-        message: `Error al guardar ❌ — ${error instanceof Error ? error.message : 'No se pudo procesar la imagen.'}`,
-      })
-    }
-  }
-
   async function handleSubmit(event) {
-    event.preventDefault()
+    event?.preventDefault?.()
     setStatus({ tone: '', message: '' })
 
-    const duplicateEntry = dishEntries.find(
-      (entry) =>
-        entry.created_by_user_id === currentUser.id &&
-        entry.restaurant_id === form.restaurant_id &&
-        entry.tipo_plato_id === form.tipo_plato_id &&
-        entry.fecha === form.fecha,
-    )
-
-    if (duplicateEntry) {
-      setStatus({
-        tone: 'error',
-        message:
-          'Error al guardar ❌ — Ya existe una valoración tuya para ese plato en ese restaurante y fecha.',
-      })
+    if (activeStep < STEPS.length - 1) {
+      goNext()
       return
     }
 
-    setIsSubmitting(true)
-
     try {
-      await createDishEntry({
-        restaurant_id: form.restaurant_id,
-        categoria_id: form.categoria_id,
-        tipo_plato_id: form.tipo_plato_id,
-        nombre_plato: form.nombre_plato,
-        sabor: form.sabor,
-        textura: form.textura,
-        presentacion: form.presentacion,
-        calidad_precio: form.calidad_precio,
-        precio_plato: form.precio_plato === '' ? null : Number(form.precio_plato),
-        notas: form.notas,
-        fecha: form.fecha,
-        foto_url: form.foto_url || null,
-        created_by_user_id: currentUser.id,
-        group_id: form.visibility === 'group' ? currentGroup.id : null,
-        visibility: form.visibility,
-      })
-      onClose()
+      const payload = validateDishEntryPayload(
+        {
+          restaurant_id: form.restaurant_id,
+          categoria_id: form.categoria_id,
+          tipo_plato_id: form.tipo_plato_id,
+          nombre_plato: form.nombre_plato,
+          sabor: form.sabor,
+          textura: form.textura,
+          presentacion: form.presentacion,
+          calidad_precio: form.calidad_precio,
+          precio_plato: form.precio_plato,
+          notas: form.notas,
+          fecha: form.fecha,
+          foto_url: normalizeImageUrl(currentPhotoValue) || null,
+          created_by_user_id: currentUser.id,
+          group_id: form.visibility === 'group' ? currentGroup?.id ?? null : null,
+          visibility: form.visibility,
+        },
+        dishEntries,
+        { excludeId: entryToEdit?.id || '' },
+      )
+
+      setIsSubmitting(true)
+
+      if (mode === 'edit' && entryToEdit?.id) {
+        const response = await updateDishEntry(entryToEdit.id, payload)
+        onSaved?.(response.dishEntry)
+      } else {
+        const response = await createDishEntry(payload)
+        onSaved?.(response.dishEntry)
+      }
+
+      onClose?.()
     } catch (error) {
       setStatus({
         tone: 'error',
@@ -321,7 +309,7 @@ export function AddDishWizard({ onClose, onOpenRestaurantForm }) {
   }
 
   return (
-    <form className="form-stack" onSubmit={handleSubmit}>
+    <div className="form-stack">
       <div className="wizard-progress">
         {STEPS.map((step, index) => (
           <div
@@ -348,7 +336,10 @@ export function AddDishWizard({ onClose, onOpenRestaurantForm }) {
 
           <div className="section-header">
             <h2>Restaurantes recientes</h2>
-            <button type="button" onClick={() => setShowInlineRestaurantForm((value) => !value)}>
+            <button
+              type="button"
+              onClick={() => setShowInlineRestaurantForm((value) => !value)}
+            >
               + Crear nuevo
             </button>
           </div>
@@ -397,7 +388,7 @@ export function AddDishWizard({ onClose, onOpenRestaurantForm }) {
             <div className="inline-creator">
               <RestaurantForm
                 onClose={() => setShowInlineRestaurantForm(false)}
-                onCreated={(restaurant) => {
+                onSaved={(restaurant) => {
                   selectRestaurant(restaurant.id)
                 }}
               />
@@ -460,7 +451,11 @@ export function AddDishWizard({ onClose, onOpenRestaurantForm }) {
                   />
                 </label>
               </div>
-              <button className="primary-button" type="button" onClick={handleCreateCategory}>
+              <button
+                className="primary-button"
+                type="button"
+                onClick={handleCreateCategory}
+              >
                 Guardar categoría
               </button>
             </div>
@@ -520,7 +515,11 @@ export function AddDishWizard({ onClose, onOpenRestaurantForm }) {
                   }
                 />
               </label>
-              <button className="primary-button" type="button" onClick={handleCreateDishType}>
+              <button
+                className="primary-button"
+                type="button"
+                onClick={handleCreateDishType}
+              >
                 Guardar tipo de plato
               </button>
             </div>
@@ -606,44 +605,28 @@ export function AddDishWizard({ onClose, onOpenRestaurantForm }) {
             </select>
           </label>
 
-          <div className="pill-row">
-            <button
-              className={`pill-button${form.photoMode === 'file' ? ' chip chip--active' : ''}`}
-              type="button"
-              onClick={() => updateField('photoMode', 'file')}
-            >
-              📷 Subir foto
-            </button>
-            <button
-              className={`pill-button${form.photoMode === 'url' ? ' chip chip--active' : ''}`}
-              type="button"
-              onClick={() => updateField('photoMode', 'url')}
-            >
-              🔗 URL externa
-            </button>
-          </div>
+          <ImageInput
+            label="Foto del plato"
+            mode={form.photoMode}
+            value={currentPhotoValue}
+            fileName={form.photoFileName}
+            onModeChange={(nextMode) => updateField('photoMode', nextMode)}
+            onChange={({ fileName, value }) => {
+              if (form.photoMode === 'file') {
+                setForm((current) => ({
+                  ...current,
+                  photoFileName: fileName,
+                  photoFileValue: value,
+                }))
+                return
+              }
 
-          {form.photoMode === 'file' ? (
-            <label className="field">
-              <span>Foto</span>
-              <input
-                type="file"
-                accept=".jpg,.jpeg,.png,.webp,.heic,image/jpeg,image/png,image/webp,image/heic"
-                onChange={handleFileSelected}
-              />
-              {form.photoFileName ? <p>{form.photoFileName}</p> : null}
-            </label>
-          ) : (
-            <label className="field">
-              <span>URL de foto</span>
-              <input
-                type="url"
-                value={form.foto_url}
-                onChange={(event) => updateField('foto_url', event.target.value)}
-                placeholder="https://..."
-              />
-            </label>
-          )}
+              setForm((current) => ({
+                ...current,
+                photoUrlValue: value,
+              }))
+            }}
+          />
         </>
       ) : null}
 
@@ -655,7 +638,11 @@ export function AddDishWizard({ onClose, onOpenRestaurantForm }) {
       ) : null}
 
       <div className="modal-actions">
-        <button className="pill-button" type="button" onClick={activeStep === 0 ? onClose : goBack}>
+        <button
+          className="pill-button"
+          type="button"
+          onClick={activeStep === 0 ? onClose : goBack}
+        >
           {activeStep === 0 ? 'Cerrar' : 'Atrás'}
         </button>
         {activeStep < STEPS.length - 1 ? (
@@ -663,11 +650,20 @@ export function AddDishWizard({ onClose, onOpenRestaurantForm }) {
             Siguiente
           </button>
         ) : (
-          <button className="primary-button" type="submit" disabled={isSubmitting}>
-            {isSubmitting ? 'Guardando...' : 'Guardar plato'}
+          <button
+            className="primary-button"
+            type="button"
+            onClick={handleSubmit}
+            disabled={isSubmitting}
+          >
+            {isSubmitting
+              ? 'Guardando...'
+              : mode === 'edit'
+                ? 'Guardar cambios'
+                : 'Guardar plato'}
           </button>
         )}
       </div>
-    </form>
+    </div>
   )
 }

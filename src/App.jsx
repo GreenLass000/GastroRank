@@ -1,20 +1,24 @@
 import { useEffect, useState } from 'react'
 import './App.css'
+import { EntityDetailSheet } from './components/details/EntityDetailSheet.jsx'
 import { LoadingOverlay } from './components/feedback/LoadingOverlay.jsx'
 import { StatusBanner } from './components/feedback/StatusBanner.jsx'
 import { ToastCenter } from './components/feedback/ToastCenter.jsx'
 import { AddDishWizard } from './components/forms/AddDishWizard.jsx'
 import { RestaurantForm } from './components/forms/RestaurantForm.jsx'
-import { FloatingActionButton } from './components/layout/FloatingActionButton.jsx'
 import { BottomNav } from './components/layout/BottomNav.jsx'
+import { FloatingActionButton } from './components/layout/FloatingActionButton.jsx'
 import { ModalSheet } from './components/layout/ModalSheet.jsx'
+import { GlobalSearchPanel } from './components/search/GlobalSearchPanel.jsx'
+import { fetchPublicShare } from './lib/api.js'
 import { APP_NAME, NAV_ITEMS } from './lib/constants.js'
 import { useAppState } from './hooks/useAppState.js'
 import { HomeScreen } from './screens/HomeScreen.jsx'
-import { RankingsScreen } from './screens/RankingsScreen.jsx'
-import { MapScreen } from './screens/MapScreen.jsx'
 import { ListsScreen } from './screens/ListsScreen.jsx'
+import { MapScreen } from './screens/MapScreen.jsx'
 import { ProfileScreen } from './screens/ProfileScreen.jsx'
+import { RankingsScreen } from './screens/RankingsScreen.jsx'
+import { ReportScreen } from './screens/ReportScreen.jsx'
 
 const SCREEN_COMPONENTS = {
   home: HomeScreen,
@@ -22,19 +26,106 @@ const SCREEN_COMPONENTS = {
   map: MapScreen,
   lists: ListsScreen,
   profile: ProfileScreen,
+  report: ReportScreen,
+}
+
+function readNavigationState() {
+  const params = new URLSearchParams(window.location.search)
+  return {
+    activeScreen:
+      params.get('share') || window.location.pathname === '/informe' ? 'report' : 'home',
+    shareToken: params.get('share') || '',
+  }
+}
+
+function writeNavigationState(nextScreen, shareToken = '') {
+  const params = new URLSearchParams(window.location.search)
+
+  if (shareToken) {
+    params.set('share', shareToken)
+  } else {
+    params.delete('share')
+  }
+
+  const nextQuery = params.toString()
+  const nextPath = nextScreen === 'report' ? '/informe' : '/'
+  const nextUrl = `${nextPath}${nextQuery ? `?${nextQuery}` : ''}`
+  window.history.pushState({}, '', nextUrl)
 }
 
 function App() {
-  const [activeScreen, setActiveScreen] = useState('home')
+  const [activeScreen, setActiveScreen] = useState(readNavigationState().activeScreen)
   const [isDishWizardOpen, setIsDishWizardOpen] = useState(false)
   const [isRestaurantFormOpen, setIsRestaurantFormOpen] = useState(false)
+  const [isSearchOpen, setIsSearchOpen] = useState(false)
+  const [entityDetailTarget, setEntityDetailTarget] = useState(null)
   const [restaurantDraftLocation, setRestaurantDraftLocation] = useState(null)
+  const [reportConfig, setReportConfig] = useState(null)
+  const [shareToken, setShareToken] = useState(readNavigationState().shareToken)
+  const [sharePayload, setSharePayload] = useState(null)
+  const [shareError, setShareError] = useState('')
+  const [isShareLoading, setIsShareLoading] = useState(false)
   const { dataSource, isLoading, loadError, toast, clearToast } = useAppState()
 
   const activeNavItem =
     NAV_ITEMS.find((item) => item.id === activeScreen) ?? NAV_ITEMS[0]
 
+  function handleScreenChange(nextScreen) {
+    setActiveScreen(nextScreen)
+    setShareToken('')
+    setSharePayload(null)
+    setShareError('')
+    writeNavigationState(nextScreen)
+  }
+
+  function openEntityDetail(target) {
+    if (!target?.id || !target?.type) {
+      return
+    }
+
+    setEntityDetailTarget(target)
+  }
+
   function renderActiveScreen() {
+    if (activeScreen === 'report') {
+      if (shareToken && shareError) {
+        return (
+          <section className="screen" aria-label="Error de informe público">
+            <article className="surface-card">
+              <strong>No se pudo abrir el enlace público</strong>
+              <p>{shareError}</p>
+            </article>
+          </section>
+        )
+      }
+
+      if (shareToken && !sharePayload) {
+        return (
+          <section className="screen" aria-label="Carga de informe público">
+            <article className="surface-card">
+              <strong>Cargando informe público</strong>
+              <p>Esperando la respuesta del enlace compartido.</p>
+            </article>
+          </section>
+        )
+      }
+
+      return (
+        <ReportScreen
+          onBack={
+            shareToken
+              ? undefined
+              : () => {
+                  handleScreenChange('rankings')
+                }
+          }
+          onOpenEntity={openEntityDetail}
+          reportConfig={reportConfig}
+          sharePayload={sharePayload}
+        />
+      )
+    }
+
     if (activeScreen === 'map') {
       return (
         <MapScreen
@@ -42,12 +133,32 @@ function App() {
             setRestaurantDraftLocation(location)
             setIsRestaurantFormOpen(true)
           }}
+          onNavigate={handleScreenChange}
+          onOpenEntity={openEntityDetail}
         />
       )
     }
 
     const ActiveScreen = SCREEN_COMPONENTS[activeScreen]
-    return <ActiveScreen />
+    if (activeScreen === 'rankings') {
+      return (
+        <ActiveScreen
+          onOpenReport={(nextReportConfig) => {
+            setReportConfig(nextReportConfig)
+            setActiveScreen('report')
+            writeNavigationState('report')
+          }}
+        />
+      )
+    }
+
+    return (
+      <ActiveScreen
+        onNavigate={handleScreenChange}
+        onOpenEntity={openEntityDetail}
+        onOpenSearch={() => setIsSearchOpen(true)}
+      />
+    )
   }
 
   useEffect(() => {
@@ -62,6 +173,62 @@ function App() {
     return () => window.clearTimeout(timeout)
   }, [clearToast, toast.message])
 
+  useEffect(() => {
+    function handlePopState() {
+      const nextState = readNavigationState()
+      setActiveScreen(nextState.activeScreen)
+      setShareToken(nextState.shareToken)
+      if (!nextState.shareToken) {
+        setSharePayload(null)
+        setShareError('')
+      }
+    }
+
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
+  useEffect(() => {
+    if (!shareToken) {
+      return
+    }
+
+    let cancelled = false
+
+    async function loadShare() {
+      try {
+        setIsShareLoading(true)
+        const payload = await fetchPublicShare(shareToken)
+
+        if (cancelled) {
+          return
+        }
+
+        setSharePayload(payload)
+        setShareError('')
+      } catch (error) {
+        if (cancelled) {
+          return
+        }
+
+        setSharePayload(null)
+        setShareError(
+          error instanceof Error ? error.message : 'No se pudo cargar el enlace público.',
+        )
+      } finally {
+        if (!cancelled) {
+          setIsShareLoading(false)
+        }
+      }
+    }
+
+    loadShare()
+
+    return () => {
+      cancelled = true
+    }
+  }, [shareToken])
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -69,18 +236,21 @@ function App() {
           <p className="eyebrow">PWA gastronómica</p>
           <h1>{APP_NAME}</h1>
         </div>
-        <button className="icon-button" type="button" aria-label="Buscar">
-          🔎
-        </button>
+        {!shareToken ? (
+          <button
+            className="icon-button"
+            type="button"
+            aria-label="Buscar"
+            onClick={() => setIsSearchOpen(true)}
+          >
+            🔎
+          </button>
+        ) : null}
       </header>
 
       <main className="screen-container">
         {loadError ? (
-          <StatusBanner
-            tone="error"
-            title="Carga parcial"
-            detail={loadError}
-          />
+          <StatusBanner tone="error" title="Carga parcial" detail={loadError} />
         ) : null}
         {dataSource === 'api' ? (
           <StatusBanner
@@ -89,20 +259,56 @@ function App() {
             detail="La app está leyendo datos reales desde la API SQLite local."
           />
         ) : null}
+        {shareError ? (
+          <StatusBanner
+            tone="error"
+            title="Share público"
+            detail={`Error al cargar ❌ — ${shareError}`}
+          />
+        ) : null}
         {renderActiveScreen()}
       </main>
 
-      <FloatingActionButton
-        label="Añadir plato rápido"
-        onClick={() => setIsDishWizardOpen(true)}
-      />
-      <BottomNav
-        activeId={activeNavItem.id}
-        items={NAV_ITEMS}
-        onChange={setActiveScreen}
-      />
-      {isLoading ? <LoadingOverlay message="Cargando..." /> : null}
+      {!shareToken ? (
+        <>
+          <FloatingActionButton
+            label="Añadir plato rápido"
+            onClick={() => setIsDishWizardOpen(true)}
+          />
+          <BottomNav
+            activeId={activeNavItem.id}
+            items={NAV_ITEMS}
+            onChange={handleScreenChange}
+          />
+        </>
+      ) : null}
+      {isLoading || isShareLoading ? <LoadingOverlay message="Cargando..." /> : null}
       <ToastCenter message={toast.message} tone={toast.tone} />
+
+      {isSearchOpen ? (
+        <ModalSheet title="Buscar" onClose={() => setIsSearchOpen(false)}>
+          <GlobalSearchPanel
+            onClose={() => setIsSearchOpen(false)}
+            onOpenEntity={openEntityDetail}
+          />
+        </ModalSheet>
+      ) : null}
+
+      {entityDetailTarget ? (
+        <ModalSheet
+          title="Detalle"
+          onClose={() => {
+            setEntityDetailTarget(null)
+          }}
+        >
+          <EntityDetailSheet
+            key={`${entityDetailTarget.type}:${entityDetailTarget.id}`}
+            target={entityDetailTarget}
+            onClose={() => setEntityDetailTarget(null)}
+          />
+        </ModalSheet>
+      ) : null}
+
       {isDishWizardOpen ? (
         <ModalSheet
           title="Añadir plato"
@@ -121,6 +327,7 @@ function App() {
           />
         </ModalSheet>
       ) : null}
+
       {isRestaurantFormOpen ? (
         <ModalSheet
           title="Nuevo restaurante"
@@ -132,9 +339,6 @@ function App() {
         >
           <RestaurantForm
             initialLocation={restaurantDraftLocation}
-            onCreated={() => {
-              setRestaurantDraftLocation(null)
-            }}
             onClose={() => {
               setIsRestaurantFormOpen(false)
               setRestaurantDraftLocation(null)

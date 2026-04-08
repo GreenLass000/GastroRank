@@ -5,8 +5,15 @@ import {
   createCategory as createCategoryRequest,
   createDishEntry as createDishEntryRequest,
   createDishType as createDishTypeRequest,
+  createGroup as createGroupRequest,
   createRestaurant as createRestaurantRequest,
   fetchBootstrapData,
+  updateCategory as updateCategoryRequest,
+  updateDishEntry as updateDishEntryRequest,
+  updateDishType as updateDishTypeRequest,
+  updateGroup as updateGroupRequest,
+  updateRestaurant as updateRestaurantRequest,
+  updateUser as updateUserRequest,
 } from '../lib/api.js'
 import {
   buildActiveFilterChips,
@@ -33,22 +40,10 @@ function hydrateState() {
     puntuacion_general: calculateGeneralScore(entry),
   }))
 
-  const restaurants = seed.restaurants.map((restaurant) => {
-    const restaurantEntries = dishEntries.filter(
-      (entry) => entry.restaurant_id === restaurant.id,
-    )
-
-    return {
-      ...restaurant,
-      restaurant_score: calculateAverageScore(restaurantEntries),
-      total_entries: restaurantEntries.length,
-    }
-  })
-
   return {
     ...seed,
     dishEntries,
-    restaurants,
+    restaurants: enrichRestaurants(seed.restaurants, dishEntries),
   }
 }
 
@@ -68,6 +63,24 @@ function buildRestaurantsByScore(restaurants) {
   return [...restaurants].sort(
     (left, right) => right.restaurant_score - left.restaurant_score,
   )
+}
+
+function enrichRestaurants(restaurants, dishEntries) {
+  return restaurants.map((restaurant) => {
+    const restaurantEntries = dishEntries.filter(
+      (entry) => entry.restaurant_id === restaurant.id,
+    )
+
+    return {
+      ...restaurant,
+      restaurant_score: calculateAverageScore(restaurantEntries),
+      total_entries: restaurantEntries.length,
+    }
+  })
+}
+
+function replaceRecordById(items, nextRecord) {
+  return items.map((item) => (item.id === nextRecord.id ? nextRecord : item))
 }
 
 function buildRankingContextsForEntries({
@@ -139,10 +152,6 @@ function buildFilteredRestaurants(restaurants, filteredEntries) {
 
 function buildDerivedState(state, filters, filterOrigin) {
   const currentUser = state.users[0]
-  const currentGroup = state.groups[0]
-  const currentUserEntries = state.dishEntries.filter(
-    (entry) => entry.created_by_user_id === currentUser.id,
-  )
   const groupsForCurrentUser = state.groups.filter((group) =>
     state.groupMembers.some(
       (member) =>
@@ -150,6 +159,10 @@ function buildDerivedState(state, filters, filterOrigin) {
         member.user_id === currentUser.id &&
         member.status === 'active',
     ),
+  )
+  const currentGroup = groupsForCurrentUser[0] ?? state.groups[0] ?? null
+  const currentUserEntries = state.dishEntries.filter(
+    (entry) => entry.created_by_user_id === currentUser.id,
   )
   const latestEntries = buildEntriesWithLabels(
     [...state.dishEntries]
@@ -160,7 +173,7 @@ function buildDerivedState(state, filters, filterOrigin) {
   )
   const rankingContexts = buildRankingContextsForEntries({
     categories: state.categories,
-    currentGroupId: currentGroup.id,
+    currentGroupId: currentGroup?.id ?? null,
     currentUserId: currentUser.id,
     dishTypes: state.dishTypes,
     entries: state.dishEntries,
@@ -191,7 +204,7 @@ function buildDerivedState(state, filters, filterOrigin) {
   )
   const filteredRankingContexts = buildRankingContextsForEntries({
     categories: state.categories,
-    currentGroupId: currentGroup.id,
+    currentGroupId: currentGroup?.id ?? null,
     currentUserId: currentUser.id,
     dishTypes: state.dishTypes,
     entries: filteredDishEntries,
@@ -351,6 +364,10 @@ export function AppStateProvider({ children }) {
     })
   }
 
+  function updateRestaurantsFromEntries(restaurants, dishEntries) {
+    return enrichRestaurants(restaurants, dishEntries)
+  }
+
   async function createRestaurant(payload) {
     const response = await createRestaurantRequest(payload)
 
@@ -373,6 +390,66 @@ export function AppStateProvider({ children }) {
     return response
   }
 
+  async function updateRestaurant(restaurantId, payload) {
+    const response = await updateRestaurantRequest(restaurantId, payload)
+
+    if (!response?.restaurant) {
+      throw new Error('La API no devolvió el restaurante actualizado.')
+    }
+
+    setState((current) => ({
+      ...current,
+      restaurants: updateRestaurantsFromEntries(
+        replaceRecordById(current.restaurants, {
+          ...response.restaurant,
+          restaurant_score:
+            current.restaurants.find((item) => item.id === restaurantId)
+              ?.restaurant_score ?? 0,
+          total_entries:
+            current.restaurants.find((item) => item.id === restaurantId)
+              ?.total_entries ?? 0,
+        }),
+        current.dishEntries,
+      ),
+    }))
+    setToast({ message: 'Guardado ✅', tone: 'success' })
+
+    return response
+  }
+
+  async function createGroup(payload) {
+    const response = await createGroupRequest(payload)
+
+    if (!response?.group || !response?.groupMember) {
+      throw new Error('La API no devolvió el grupo creado correctamente.')
+    }
+
+    setState((current) => ({
+      ...current,
+      groups: [...current.groups, response.group],
+      groupMembers: [...current.groupMembers, response.groupMember],
+    }))
+    setToast({ message: 'Guardado ✅', tone: 'success' })
+
+    return response
+  }
+
+  async function updateGroup(groupId, payload) {
+    const response = await updateGroupRequest(groupId, payload)
+
+    if (!response?.group) {
+      throw new Error('La API no devolvió el grupo actualizado.')
+    }
+
+    setState((current) => ({
+      ...current,
+      groups: replaceRecordById(current.groups, response.group),
+    }))
+    setToast({ message: 'Guardado ✅', tone: 'success' })
+
+    return response
+  }
+
   async function createCategory(payload) {
     const response = await createCategoryRequest(payload)
 
@@ -383,6 +460,21 @@ export function AppStateProvider({ children }) {
     setState((current) => ({
       ...current,
       categories: [...current.categories, response.category],
+    }))
+    setToast({ message: 'Guardado ✅', tone: 'success' })
+    return response
+  }
+
+  async function updateCategory(categoryId, payload) {
+    const response = await updateCategoryRequest(categoryId, payload)
+
+    if (!response?.category) {
+      throw new Error('La API no devolvió la categoría actualizada.')
+    }
+
+    setState((current) => ({
+      ...current,
+      categories: replaceRecordById(current.categories, response.category),
     }))
     setToast({ message: 'Guardado ✅', tone: 'success' })
     return response
@@ -403,6 +495,21 @@ export function AppStateProvider({ children }) {
     return response
   }
 
+  async function updateDishType(dishTypeId, payload) {
+    const response = await updateDishTypeRequest(dishTypeId, payload)
+
+    if (!response?.dishType) {
+      throw new Error('La API no devolvió el tipo de plato actualizado.')
+    }
+
+    setState((current) => ({
+      ...current,
+      dishTypes: replaceRecordById(current.dishTypes, response.dishType),
+    }))
+    setToast({ message: 'Guardado ✅', tone: 'success' })
+    return response
+  }
+
   async function createDishEntry(payload) {
     const response = await createDishEntryRequest(payload)
 
@@ -414,30 +521,59 @@ export function AppStateProvider({ children }) {
 
     setState((current) => {
       const nextDishEntries = [...current.dishEntries, createdEntry]
-      const nextRestaurants = current.restaurants.map((restaurant) => {
-        if (restaurant.id !== createdEntry.restaurant_id) {
-          return restaurant
-        }
-
-        const restaurantEntries = nextDishEntries.filter(
-          (entry) => entry.restaurant_id === restaurant.id,
-        )
-
-        return {
-          ...restaurant,
-          restaurant_score: calculateAverageScore(restaurantEntries),
-          total_entries: restaurantEntries.length,
-        }
-      })
 
       return {
         ...current,
         dishEntries: nextDishEntries,
-        restaurants: nextRestaurants,
+        restaurants: updateRestaurantsFromEntries(
+          current.restaurants,
+          nextDishEntries,
+        ),
       }
     })
     setToast({ message: 'Guardado ✅', tone: 'success' })
 
+    return response
+  }
+
+  async function updateDishEntry(dishEntryId, payload) {
+    const response = await updateDishEntryRequest(dishEntryId, payload)
+
+    if (!response?.dishEntry) {
+      throw new Error('La API no devolvió la valoración actualizada.')
+    }
+
+    setState((current) => {
+      const nextDishEntries = replaceRecordById(
+        current.dishEntries,
+        response.dishEntry,
+      )
+
+      return {
+        ...current,
+        dishEntries: nextDishEntries,
+        restaurants: updateRestaurantsFromEntries(
+          current.restaurants,
+          nextDishEntries,
+        ),
+      }
+    })
+    setToast({ message: 'Guardado ✅', tone: 'success' })
+    return response
+  }
+
+  async function updateUser(userId, payload) {
+    const response = await updateUserRequest(userId, payload)
+
+    if (!response?.user) {
+      throw new Error('La API no devolvió el perfil actualizado.')
+    }
+
+    setState((current) => ({
+      ...current,
+      users: replaceRecordById(current.users, response.user),
+    }))
+    setToast({ message: 'Guardado ✅', tone: 'success' })
     return response
   }
 
@@ -526,10 +662,17 @@ export function AppStateProvider({ children }) {
         applyFilters,
         resetFilters,
         removeFilter,
+        updateUser,
         createRestaurant,
+        updateRestaurant,
+        createGroup,
+        updateGroup,
         createCategory,
+        updateCategory,
         createDishType,
+        updateDishType,
         createDishEntry,
+        updateDishEntry,
       }}
     >
       {children}
@@ -546,21 +689,9 @@ function hydrateStateFromData(rawData) {
         : calculateGeneralScore(entry),
   }))
 
-  const restaurants = rawData.restaurants.map((restaurant) => {
-    const restaurantEntries = dishEntries.filter(
-      (entry) => entry.restaurant_id === restaurant.id,
-    )
-
-    return {
-      ...restaurant,
-      restaurant_score: calculateAverageScore(restaurantEntries),
-      total_entries: restaurantEntries.length,
-    }
-  })
-
   return {
     ...rawData,
     dishEntries,
-    restaurants,
+    restaurants: enrichRestaurants(rawData.restaurants, dishEntries),
   }
 }

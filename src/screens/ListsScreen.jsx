@@ -5,14 +5,55 @@ import { SectionHeader } from '../components/layout/SectionHeader.jsx'
 import { useAppState } from '../hooks/useAppState.js'
 import { formatDate, formatScore } from '../lib/format.js'
 
-export function ListsScreen() {
+function escapeCsvValue(value) {
+  const stringValue = value === null || value === undefined ? '' : String(value)
+  return `"${stringValue.replaceAll('"', '""')}"`
+}
+
+function buildListsCsv({ entries, restaurants }) {
+  const header = [
+    'tipo_registro',
+    'nombre',
+    'restaurante',
+    'direccion',
+    'puntuacion',
+    'precio',
+    'fecha',
+  ]
+  const restaurantRows = restaurants.map((restaurant) => [
+    'restaurante',
+    restaurant.nombre,
+    restaurant.nombre,
+    restaurant.direccion_texto,
+    formatScore(restaurant.restaurant_score),
+    restaurant.precio_rango,
+    restaurant.created_at ? formatDate(restaurant.created_at) : '',
+  ])
+  const entryRows = entries.map((entry) => [
+    'entrada',
+    entry.dishTypeName,
+    entry.restaurantName,
+    '',
+    formatScore(entry.puntuacion_general),
+    '',
+    formatDate(entry.created_at),
+  ])
+
+  return [header, ...restaurantRows, ...entryRows]
+    .map((row) => row.map(escapeCsvValue).join(','))
+    .join('\n')
+}
+
+export function ListsScreen({ onOpenEntity }) {
   const {
     activeFilterChips,
     activeFilters,
     applyFilters,
     availableFilterOptions,
     currentGroup,
+    dishTypes,
     filterOriginLabel,
+    filteredDishEntries,
     filteredLatestEntries,
     filteredRestaurantsByScore,
     filtersCount,
@@ -22,21 +63,71 @@ export function ListsScreen() {
     resetFilters,
   } = useAppState()
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
+  const [exportStatus, setExportStatus] = useState({ tone: '', message: '' })
 
   const totalResults =
     filteredRestaurantsByScore.length + filteredLatestEntries.length
+
+  function handleExportCsv() {
+    try {
+      const csv = buildListsCsv({
+        entries: filteredDishEntries.map((entry) => ({
+          ...entry,
+          dishTypeName:
+            dishTypes.find((dishType) => dishType.id === entry.tipo_plato_id)?.nombre ??
+            'Plato',
+          restaurantName:
+            filteredRestaurantsByScore.find(
+              (restaurant) => restaurant.id === entry.restaurant_id,
+            )?.nombre ?? 'Restaurante',
+        })),
+        restaurants: filteredRestaurantsByScore,
+      })
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'ranking-gastronomico-listas.csv'
+      link.click()
+      URL.revokeObjectURL(url)
+      setExportStatus({ tone: 'success', message: 'Guardado ✅ — CSV exportado.' })
+    } catch (error) {
+      setExportStatus({
+        tone: 'error',
+        message: `Error al guardar ❌ — ${error instanceof Error ? error.message : 'No se pudo exportar el CSV.'}`,
+      })
+    }
+  }
 
   return (
     <section className="screen" aria-label="Pantalla de listas">
       <article className="screen__hero">
         <h2>Listas reutilizables para entidades clave</h2>
         <p>
-          Esta sección ya permite cruzar restaurantes y entradas con filtros
-          persistentes compartidos con rankings.
+          Esta sección cruza restaurantes, entradas y grupos con filtros
+          persistentes y ahora abre detalle real al tocar cada elemento.
         </p>
       </article>
 
       <div className="screen-note">{totalResults} resultados encontrados</div>
+      <div className="pill-row">
+        <button
+          className="pill-button"
+          type="button"
+          onClick={() => setIsFilterPanelOpen(true)}
+        >
+          {filtersCount > 0 ? `Filtrar (${filtersCount})` : 'Filtrar'}
+        </button>
+        <button className="pill-button" type="button" onClick={handleExportCsv}>
+          Exportar CSV
+        </button>
+      </div>
+      {exportStatus.message ? (
+        <div className={`status-banner status-banner--${exportStatus.tone || 'info'}`}>
+          <strong>{exportStatus.tone === 'success' ? 'Estado' : 'Revisión'}</strong>
+          <p>{exportStatus.message}</p>
+        </div>
+      ) : null}
 
       {hasActiveFilters ? (
         <div className="chip-row" aria-label="Filtros activos">
@@ -53,15 +144,16 @@ export function ListsScreen() {
         </div>
       ) : null}
 
-      <SectionHeader
-        title="Restaurantes"
-        actionLabel={filtersCount > 0 ? `Filtrar (${filtersCount})` : 'Filtrar'}
-        onAction={() => setIsFilterPanelOpen(true)}
-      />
+      <SectionHeader title="Restaurantes" />
       <div className="list-stack">
         {filteredRestaurantsByScore.length > 0 ? (
           filteredRestaurantsByScore.map((item) => (
-            <article key={item.id} className="list-card">
+            <button
+              key={item.id}
+              className="list-card list-card--button"
+              type="button"
+              onClick={() => onOpenEntity?.({ type: 'restaurant', id: item.id })}
+            >
               <div className="list-card__title">
                 <span className="emoji-badge" aria-hidden="true">
                   📍
@@ -74,7 +166,7 @@ export function ListsScreen() {
                   </p>
                 </div>
               </div>
-            </article>
+            </button>
           ))
         ) : (
           <article className="surface-card">
@@ -84,11 +176,16 @@ export function ListsScreen() {
         )}
       </div>
 
-      <SectionHeader title="Últimas entradas" actionLabel="Histórico" />
+      <SectionHeader title="Últimas entradas" />
       <div className="list-stack">
         {filteredLatestEntries.length > 0 ? (
-          filteredLatestEntries.slice(0, 4).map((entry) => (
-            <article key={entry.id} className="list-card">
+          filteredLatestEntries.map((entry) => (
+            <button
+              key={entry.id}
+              className="list-card list-card--button"
+              type="button"
+              onClick={() => onOpenEntity?.({ type: 'dishEntry', id: entry.id })}
+            >
               <div className="list-card__title">
                 <span className="emoji-badge" aria-hidden="true">
                   🍽️
@@ -101,7 +198,7 @@ export function ListsScreen() {
                   </p>
                 </div>
               </div>
-            </article>
+            </button>
           ))
         ) : (
           <article className="surface-card">
@@ -111,10 +208,15 @@ export function ListsScreen() {
         )}
       </div>
 
-      <SectionHeader title="Grupos" actionLabel="Invitar" />
+      <SectionHeader title="Grupos" />
       <div className="list-stack">
         {groupsForCurrentUser.map((group) => (
-          <article key={group.id} className="list-card">
+          <button
+            key={group.id}
+            className="list-card list-card--button"
+            type="button"
+            onClick={() => onOpenEntity?.({ type: 'group', id: group.id })}
+          >
             <div className="list-card__title">
               <span className="emoji-badge" aria-hidden="true">
                 👥
@@ -123,11 +225,11 @@ export function ListsScreen() {
                 <strong>{group.nombre}</strong>
                 <p>
                   {group.tipo} • código {group.invite_code} •{' '}
-                  {group.id === currentGroup.id ? 'Activo' : 'Disponible'}
+                  {group.id === currentGroup?.id ? 'Activo' : 'Disponible'}
                 </p>
               </div>
             </div>
-          </article>
+          </button>
         ))}
       </div>
 

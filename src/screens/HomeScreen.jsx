@@ -4,7 +4,7 @@ import { useAppState } from '../hooks/useAppState.js'
 import { formatScore } from '../lib/format.js'
 import { getScoreTone } from '../lib/scoring.js'
 
-export function HomeScreen() {
+export function HomeScreen({ onNavigate, onOpenEntity, onOpenSearch }) {
   const { categories, latestEntries, rankingContexts, restaurantsByScore } =
     useAppState()
   const [activeCategoryId, setActiveCategoryId] = useState(categories[0]?.id ?? '')
@@ -18,31 +18,42 @@ export function HomeScreen() {
       <article className="screen__hero">
         <h2>Descubre, puntúa y compara tus platos favoritos</h2>
         <p>
-          Esta home ya consume datos seed sincronizados con la base SQLite del
-          proyecto.
+          La home ya consume datos reales y ahora enlaza a detalle, búsqueda y
+          pantallas de trabajo sin CTAs muertos.
         </p>
 
-        <div className="hero-search" role="search">
+        <button
+          className="hero-search hero-search--button"
+          type="button"
+          onClick={onOpenSearch}
+          aria-label="Buscar restaurantes o tipos de plato"
+        >
           <span aria-hidden="true">🔍</span>
           <span>Buscar restaurantes o tipos de plato</span>
-        </div>
+        </button>
       </article>
 
       <div className="screen-note">
-        Datos seed cargados: últimos platos, top por categoría y restaurantes
-        con score real ya salen del estado compartido.
+        Datos sincronizados: últimos platos, tops por categoría y restaurantes con
+        score real.
       </div>
 
-      <SectionHeader title="Últimos platos añadidos" actionLabel="Ver todo" />
+      <SectionHeader
+        title="Últimos platos añadidos"
+        actionLabel="Ver todo"
+        onAction={() => onNavigate?.('lists')}
+      />
       <div className="horizontal-scroll">
         {latestEntries.map((dish) => (
-          <article key={dish.id} className="list-card">
+          <button
+            key={dish.id}
+            className="list-card list-card--button"
+            type="button"
+            onClick={() => onOpenEntity?.({ type: 'dishEntry', id: dish.id })}
+          >
             <div className="list-card__title">
               <span className="emoji-badge" aria-hidden="true">
-                {
-                  categories.find((category) => category.id === dish.categoria_id)
-                    ?.icono
-                }
+                {categories.find((category) => category.id === dish.categoria_id)?.icono}
               </span>
               <div>
                 <strong>{dish.dishTypeName}</strong>
@@ -57,11 +68,15 @@ export function HomeScreen() {
                 {formatScore(dish.puntuacion_general)}
               </span>
             </div>
-          </article>
+          </button>
         ))}
       </div>
 
-      <SectionHeader title="Top por categoría" actionLabel="Explorar" />
+      <SectionHeader
+        title="Top por categoría"
+        actionLabel="Explorar"
+        onAction={() => onNavigate?.('rankings')}
+      />
       <div className="chip-row">
         {categories.map((category) => (
           <button
@@ -76,7 +91,16 @@ export function HomeScreen() {
       </div>
 
       {topByCategory ? (
-        <article className="surface-card">
+        <button
+          className="surface-card surface-card--button"
+          type="button"
+          onClick={() =>
+            onOpenEntity?.({
+              type: 'restaurant',
+              id: topByCategory.restaurantId,
+            })
+          }
+        >
           <strong>
             {topByCategory.categoryIcon} {topByCategory.restaurantName}
           </strong>
@@ -84,7 +108,7 @@ export function HomeScreen() {
             {topByCategory.dishTypeName} • {formatScore(topByCategory.score)} •{' '}
             {topByCategory.votos} votos
           </p>
-        </article>
+        </button>
       ) : (
         <article className="surface-card">
           <strong>Sin datos aún</strong>
@@ -92,16 +116,25 @@ export function HomeScreen() {
         </article>
       )}
 
-      <SectionHeader title="Restaurantes cercanos" actionLabel="Ubicarme" />
+      <SectionHeader
+        title="Restaurantes cercanos"
+        actionLabel="Ubicarme"
+        onAction={() => onNavigate?.('map')}
+      />
       <div className="list-stack">
-        {restaurantsByScore.slice(0, 2).map((restaurant) => (
-          <article key={restaurant.id} className="surface-card">
+        {restaurantsByScore.slice(0, 3).map((restaurant) => (
+          <button
+            key={restaurant.id}
+            className="surface-card surface-card--button"
+            type="button"
+            onClick={() => onOpenEntity?.({ type: 'restaurant', id: restaurant.id })}
+          >
             <strong>{restaurant.nombre}</strong>
             <p>
               {restaurant.direccion_texto} • {restaurant.precio_rango} •{' '}
               {formatScore(restaurant.restaurant_score)}
             </p>
-          </article>
+          </button>
         ))}
       </div>
     </section>

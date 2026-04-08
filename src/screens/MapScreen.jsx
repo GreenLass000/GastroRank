@@ -6,7 +6,11 @@ import { formatScore } from '../lib/format.js'
 import { PIN_STYLES } from '../lib/constants.js'
 import { generateGoogleMapsUrl, getMapsProvider } from '../lib/maps.js'
 
-export function MapScreen({ onCreateRestaurantAtLocation }) {
+export function MapScreen({
+  onCreateRestaurantAtLocation,
+  onNavigate,
+  onOpenEntity,
+}) {
   const {
     categories,
     clearRestaurantPinStyle,
@@ -49,8 +53,7 @@ export function MapScreen({ onCreateRestaurantAtLocation }) {
             'Sin platos valorados todavía',
           bestDishScore: bestEntry?.puntuacion_general ?? null,
           categoryIcon: bestCategory?.icono || '🍽️',
-          mapsUrl:
-            restaurant.google_maps_url || generateGoogleMapsUrl(restaurant),
+          mapsUrl: restaurant.google_maps_url || generateGoogleMapsUrl(restaurant),
         }
       }),
     [
@@ -75,14 +78,17 @@ export function MapScreen({ onCreateRestaurantAtLocation }) {
       <article className="screen__hero">
         <h2>Mapa interactivo con selección deliberada</h2>
         <p>
-          El mapa ya pinta restaurantes reales, diferencia tap de long-press y
-          permite arrancar el alta de restaurante desde una ubicación concreta.
+          El mapa pinta restaurantes reales, diferencia tap de long-press y abre
+          detalle útil desde cada pin.
         </p>
       </article>
 
       <SectionHeader
         title="Vista del mapa"
         actionLabel={provider === 'leaflet-osm' ? 'OpenStreetMap' : 'Mapa'}
+        onAction={() => {
+          window.open('https://www.openstreetmap.org', '_blank', 'noreferrer')
+        }}
       />
       <article className="map-card">
         <MapView
@@ -135,7 +141,7 @@ export function MapScreen({ onCreateRestaurantAtLocation }) {
         ) : null}
       </article>
 
-      <SectionHeader title="Estilos de pin" actionLabel="Preferencia global" />
+      <SectionHeader title="Estilos de pin" />
       <div className="chip-row">
         {PIN_STYLES.map((style) => (
           <button
@@ -152,8 +158,8 @@ export function MapScreen({ onCreateRestaurantAtLocation }) {
       <article className="surface-card">
         <strong>Regla crítica</strong>
         <p>
-          Un tap normal nunca debe crear restaurantes. La creación solo se
-          activará con long-press de al menos 500 ms.
+          Un tap normal nunca debe crear restaurantes. La creación solo se activa
+          con long-press de al menos 500 ms.
         </p>
       </article>
 
@@ -195,6 +201,15 @@ export function MapScreen({ onCreateRestaurantAtLocation }) {
             >
               Quitar override
             </button>
+            <button
+              className="pill-button"
+              type="button"
+              onClick={() =>
+                onOpenEntity?.({ type: 'restaurant', id: selectedRestaurant.id })
+              }
+            >
+              Ver detalle
+            </button>
           </div>
           {selectedRestaurant.mapsUrl ? (
             <a href={selectedRestaurant.mapsUrl} target="_blank" rel="noreferrer">
@@ -204,16 +219,25 @@ export function MapScreen({ onCreateRestaurantAtLocation }) {
         </article>
       ) : null}
 
-      <SectionHeader title="Pins previstos con datos reales" actionLabel="Ver lista" />
+      <SectionHeader
+        title="Pins previstos con datos reales"
+        actionLabel="Ver lista"
+        onAction={() => onNavigate?.('lists')}
+      />
       <div className="list-stack">
         {restaurants.map((restaurant) => (
-          <article key={restaurant.id} className="surface-card">
+          <button
+            key={restaurant.id}
+            className="surface-card surface-card--button"
+            type="button"
+            onClick={() => onOpenEntity?.({ type: 'restaurant', id: restaurant.id })}
+          >
             <strong>{restaurant.nombre}</strong>
             <p>
               {restaurant.precio_rango} • {formatScore(restaurant.restaurant_score)} •{' '}
               {restaurant.total_entries} platos valorados
             </p>
-          </article>
+          </button>
         ))}
       </div>
     </section>

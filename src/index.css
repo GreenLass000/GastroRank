@@ -67,3 +67,38 @@ p {
 strong {
   color: var(--color-text);
 }
+
+@media print {
+  body {
+    background: #ffffff;
+  }
+
+  .topbar,
+  .bottom-nav,
+  .fab,
+  .toast-center,
+  .modal-backdrop,
+  .icon-button,
+  .no-print {
+    display: none !important;
+  }
+
+  .screen-container {
+    padding: 0 !important;
+  }
+
+  .screen,
+  .report-screen {
+    gap: 12px !important;
+  }
+
+  .surface-card,
+  .list-card,
+  .stat-card,
+  .screen__hero {
+    box-shadow: none !important;
+    border: 1px solid #d7d7d7 !important;
+    background: #ffffff !important;
+    break-inside: avoid;
+  }
+}

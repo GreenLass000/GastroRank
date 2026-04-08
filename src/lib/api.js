@@ -52,7 +52,45 @@ export function createRestaurant(payload) {
   return requestJson('/api/restaurants', {
     method: 'POST',
     body: payload,
-    timeoutMs: 8000,
+    timeoutMs: 60000,
+  })
+}
+
+export function updateRestaurant(restaurantId, payload) {
+  return requestJson(`/api/restaurants/${encodeURIComponent(restaurantId)}`, {
+    method: 'PUT',
+    body: payload,
+    timeoutMs: 60000,
+  })
+}
+
+export function createGroup(payload) {
+  return requestJson('/api/groups', {
+    method: 'POST',
+    body: payload,
+    timeoutMs: 15000,
+  })
+}
+
+export function updateGroup(groupId, payload) {
+  return requestJson(`/api/groups/${encodeURIComponent(groupId)}`, {
+    method: 'PUT',
+    body: payload,
+    timeoutMs: 15000,
+  })
+}
+
+export function createPublicShareToken(payload) {
+  return requestJson('/api/public-share-tokens', {
+    method: 'POST',
+    body: payload,
+    timeoutMs: 15000,
+  })
+}
+
+export function fetchPublicShare(token) {
+  return fetchJson(`/api/public-share/${encodeURIComponent(token)}`, {
+    timeoutMs: 15000,
   })
 }
 
@@ -60,7 +98,15 @@ export function createCategory(payload) {
   return requestJson('/api/categories', {
     method: 'POST',
     body: payload,
-    timeoutMs: 8000,
+    timeoutMs: 15000,
+  })
+}
+
+export function updateCategory(categoryId, payload) {
+  return requestJson(`/api/categories/${encodeURIComponent(categoryId)}`, {
+    method: 'PUT',
+    body: payload,
+    timeoutMs: 15000,
   })
 }
 
@@ -68,7 +114,15 @@ export function createDishType(payload) {
   return requestJson('/api/dish-types', {
     method: 'POST',
     body: payload,
-    timeoutMs: 8000,
+    timeoutMs: 15000,
+  })
+}
+
+export function updateDishType(dishTypeId, payload) {
+  return requestJson(`/api/dish-types/${encodeURIComponent(dishTypeId)}`, {
+    method: 'PUT',
+    body: payload,
+    timeoutMs: 15000,
   })
 }
 
@@ -76,7 +130,23 @@ export function createDishEntry(payload) {
   return requestJson('/api/dish-entries', {
     method: 'POST',
     body: payload,
-    timeoutMs: 10000,
+    timeoutMs: 60000,
+  })
+}
+
+export function updateDishEntry(dishEntryId, payload) {
+  return requestJson(`/api/dish-entries/${encodeURIComponent(dishEntryId)}`, {
+    method: 'PUT',
+    body: payload,
+    timeoutMs: 60000,
+  })
+}
+
+export function updateUser(userId, payload) {
+  return requestJson(`/api/users/${encodeURIComponent(userId)}`, {
+    method: 'PUT',
+    body: payload,
+    timeoutMs: 15000,
   })
 }
 

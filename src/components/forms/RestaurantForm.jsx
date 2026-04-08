@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAppState } from '../../hooks/useAppState.js'
+import { normalizeImageUrl } from '../../lib/images.js'
 import {
   buildPlaceSuggestions,
   fetchPlaceSuggestions,
@@ -7,26 +8,71 @@ import {
   getMapsProvider,
   mergePlaceSuggestions,
 } from '../../lib/maps.js'
+import {
+  LOCATION_REQUIRED_MESSAGE,
+  validateRestaurantPayload,
+} from '../../lib/validation.js'
 import { RestaurantMiniMap } from '../map/RestaurantMiniMap.jsx'
-
-const LOCATION_REQUIRED_MESSAGE =
-  'La ubicación es obligatoria. Búscala con IA, selecciona en el mapa o usa tu ubicación actual.'
+import { ImageInput } from './ImageInput.jsx'
 
 const INITIAL_FORM = {
   nombre: '',
   direccion_texto: '',
   precio_rango: '€',
   notas: '',
-  cover_photo_url: '',
+  coverPhotoMode: 'url',
+  coverPhotoUrl: '',
+  coverPhotoFileValue: '',
+  coverPhotoFileName: '',
   google_maps_url: '',
   lat: '',
   lng: '',
   tags: '',
 }
 
-export function RestaurantForm({ initialLocation = null, onClose, onCreated }) {
-  const { createRestaurant, currentUser, restaurants } = useAppState()
-  const [form, setForm] = useState(INITIAL_FORM)
+function buildInitialState(initialValues = {}) {
+  const coverPhotoUrl = initialValues.cover_photo_url || ''
+  const coverPhotoMode = coverPhotoUrl.startsWith('data:image/') ? 'file' : 'url'
+
+  return {
+    ...INITIAL_FORM,
+    nombre: initialValues.nombre || '',
+    direccion_texto: initialValues.direccion_texto || '',
+    precio_rango: initialValues.precio_rango || '€',
+    notas: initialValues.notas || '',
+    coverPhotoMode,
+    coverPhotoUrl: coverPhotoMode === 'url' ? coverPhotoUrl : '',
+    coverPhotoFileValue: coverPhotoMode === 'file' ? coverPhotoUrl : '',
+    coverPhotoFileName: '',
+    google_maps_url: initialValues.google_maps_url || '',
+    lat:
+      initialValues.lat === undefined || initialValues.lat === null
+        ? ''
+        : String(initialValues.lat),
+    lng:
+      initialValues.lng === undefined || initialValues.lng === null
+        ? ''
+        : String(initialValues.lng),
+    tags: Array.isArray(initialValues.tags)
+      ? initialValues.tags.join(', ')
+      : initialValues.tags || '',
+  }
+}
+
+export function RestaurantForm({
+  initialLocation = null,
+  initialValues = null,
+  mode = 'create',
+  onClose,
+  onSaved,
+}) {
+  const {
+    createRestaurant,
+    currentUser,
+    restaurants,
+    updateRestaurant,
+  } = useAppState()
+  const [form, setForm] = useState(() => buildInitialState(initialValues ?? {}))
   const [status, setStatus] = useState({ tone: '', message: '' })
   const [searchStatus, setSearchStatus] = useState({ tone: '', message: '' })
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -35,6 +81,10 @@ export function RestaurantForm({ initialLocation = null, onClose, onCreated }) {
   const [isSearchFocused, setIsSearchFocused] = useState(false)
   const [remotePlaceSuggestions, setRemotePlaceSuggestions] = useState([])
   const mapsProvider = getMapsProvider()
+
+  useEffect(() => {
+    setForm(buildInitialState(initialValues ?? {}))
+  }, [initialValues])
 
   const locationPreview = useMemo(() => {
     if (form.lat === '' || form.lng === '') {
@@ -58,14 +108,20 @@ export function RestaurantForm({ initialLocation = null, onClose, onCreated }) {
   }, [form.lat, form.lng])
   const hasLocation = Boolean(locationPreview)
   const localPlaceSuggestions = useMemo(
-    () => buildPlaceSuggestions(form.nombre, restaurants),
-    [form.nombre, restaurants],
+    () =>
+      buildPlaceSuggestions(
+        form.nombre,
+        restaurants.filter((restaurant) => restaurant.id !== initialValues?.id),
+      ),
+    [form.nombre, initialValues?.id, restaurants],
   )
   const placeSuggestions = useMemo(
     () => mergePlaceSuggestions(remotePlaceSuggestions, localPlaceSuggestions),
     [localPlaceSuggestions, remotePlaceSuggestions],
   )
   const showSuggestionDropdown = isSearchFocused && placeSuggestions.length > 0
+  const currentCoverPhotoValue =
+    form.coverPhotoMode === 'file' ? form.coverPhotoFileValue : form.coverPhotoUrl
 
   function applyLocation(location) {
     setForm((current) => ({
@@ -74,8 +130,7 @@ export function RestaurantForm({ initialLocation = null, onClose, onCreated }) {
       direccion_texto: location.address || current.direccion_texto,
       lat: String(location.lat),
       lng: String(location.lng),
-      google_maps_url:
-        location.googleMapsUrl || generateGoogleMapsUrl(location),
+      google_maps_url: location.googleMapsUrl || generateGoogleMapsUrl(location),
     }))
     setIsSearchFocused(false)
   }
@@ -141,7 +196,8 @@ export function RestaurantForm({ initialLocation = null, onClose, onCreated }) {
           suggestions.length > 0
             ? {
                 tone: 'success',
-                message: 'Ubicación encontrada ✅ — Se muestran resultados reales del proveedor abierto.',
+                message:
+                  'Ubicación encontrada ✅ — Se muestran resultados reales del proveedor abierto.',
               }
             : {
                 tone: 'info',
@@ -219,15 +275,7 @@ export function RestaurantForm({ initialLocation = null, onClose, onCreated }) {
     event.preventDefault()
     setStatus({ tone: '', message: '' })
 
-    if (!form.nombre.trim()) {
-      setStatus({
-        tone: 'error',
-        message: 'Error al guardar ❌ — El nombre del restaurante es obligatorio.',
-      })
-      return
-    }
-
-    if (!hasLocation) {
+    if (!hasLocation || !locationPreview) {
       setStatus({
         tone: 'error',
         message: `Error al guardar ❌ — ${LOCATION_REQUIRED_MESSAGE}`,
@@ -235,37 +283,38 @@ export function RestaurantForm({ initialLocation = null, onClose, onCreated }) {
       return
     }
 
-    setIsSubmitting(true)
-
-    const payload = {
-      ...form,
-      lat: locationPreview.latNumber,
-      lng: locationPreview.lngNumber,
-      tags: form.tags
-        .split(',')
-        .map((tag) => tag.trim())
-        .filter(Boolean),
-      created_by_user_id: currentUser.id,
-    }
-
     try {
-      const response = await createRestaurant(payload)
+      const payload = validateRestaurantPayload(
+        {
+          ...form,
+          cover_photo_url: normalizeImageUrl(currentCoverPhotoValue),
+          lat: locationPreview.latNumber,
+          lng: locationPreview.lngNumber,
+          tags: form.tags,
+          created_by_user_id: currentUser.id,
+        },
+        restaurants,
+        { excludeId: initialValues?.id || '' },
+      )
 
-      setStatus({
-        tone: 'success',
-        message: 'Guardado ✅',
-      })
+      setIsSubmitting(true)
 
-      if (response?.restaurant) {
-        window.setTimeout(() => {
-          onCreated?.(response.restaurant)
-          onClose()
-        }, 500)
+      if (mode === 'edit' && initialValues?.id) {
+        const response = await updateRestaurant(initialValues.id, payload)
+        onSaved?.(response.restaurant)
+      } else {
+        const response = await createRestaurant(payload)
+        onSaved?.(response.restaurant)
       }
+
+      setStatus({ tone: 'success', message: 'Guardado ✅' })
+      window.setTimeout(() => {
+        onClose?.()
+      }, 400)
     } catch (error) {
       setStatus({
         tone: 'error',
-        message: `Error al guardar ❌ — ${error instanceof Error ? error.message : 'No se pudo crear el restaurante.'}`,
+        message: `Error al guardar ❌ — ${error instanceof Error ? error.message : 'No se pudo guardar el restaurante.'}`,
       })
     } finally {
       setIsSubmitting(false)
@@ -327,9 +376,7 @@ export function RestaurantForm({ initialLocation = null, onClose, onCreated }) {
 
       <div className="status-banner status-banner--info">
         <strong>
-          {mapsProvider === 'leaflet-osm'
-            ? 'OpenStreetMap activo'
-            : 'Mapa activo'}
+          {mapsProvider === 'leaflet-osm' ? 'OpenStreetMap activo' : 'Mapa activo'}
         </strong>
         <p>
           {mapsProvider === 'leaflet-osm'
@@ -419,29 +466,40 @@ export function RestaurantForm({ initialLocation = null, onClose, onCreated }) {
         </div>
       )}
 
-      <div className="field-grid">
-        <label className="field">
-          <span>Rango de precio</span>
-          <select
-            value={form.precio_rango}
-            onChange={(event) => updateField('precio_rango', event.target.value)}
-          >
-            <option value="€">€</option>
-            <option value="€€">€€</option>
-            <option value="€€€">€€€</option>
-          </select>
-        </label>
+      <label className="field">
+        <span>Rango de precio</span>
+        <select
+          value={form.precio_rango}
+          onChange={(event) => updateField('precio_rango', event.target.value)}
+        >
+          <option value="€">€</option>
+          <option value="€€">€€</option>
+          <option value="€€€">€€€</option>
+        </select>
+      </label>
 
-        <label className="field">
-          <span>Foto de portada (URL)</span>
-          <input
-            type="url"
-            value={form.cover_photo_url}
-            onChange={(event) => updateField('cover_photo_url', event.target.value)}
-            placeholder="https://..."
-          />
-        </label>
-      </div>
+      <ImageInput
+        label="Foto de portada"
+        mode={form.coverPhotoMode}
+        value={currentCoverPhotoValue}
+        fileName={form.coverPhotoFileName}
+        onModeChange={(nextMode) => updateField('coverPhotoMode', nextMode)}
+        onChange={({ fileName, value }) => {
+          if (form.coverPhotoMode === 'file') {
+            setForm((current) => ({
+              ...current,
+              coverPhotoFileName: fileName,
+              coverPhotoFileValue: value,
+            }))
+            return
+          }
+
+          setForm((current) => ({
+            ...current,
+            coverPhotoUrl: value,
+          }))
+        }}
+      />
 
       <label className="field">
         <span>Google Maps URL</span>
@@ -485,7 +543,11 @@ export function RestaurantForm({ initialLocation = null, onClose, onCreated }) {
           Cancelar
         </button>
         <button className="primary-button" type="submit" disabled={isSubmitting}>
-          {isSubmitting ? 'Guardando...' : 'Guardar restaurante'}
+          {isSubmitting
+            ? 'Guardando...'
+            : mode === 'edit'
+              ? 'Guardar cambios'
+              : 'Guardar restaurante'}
         </button>
       </div>
     </form>

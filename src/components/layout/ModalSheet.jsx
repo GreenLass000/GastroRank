@@ -1,4 +1,17 @@
+import { useEffect } from 'react'
+
 export function ModalSheet({ children, onClose, title }) {
+  useEffect(() => {
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') {
+        onClose?.()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
+
   return (
     <div className="modal-backdrop" role="presentation" onClick={onClose}>
       <div
@@ -12,6 +25,7 @@ export function ModalSheet({ children, onClose, title }) {
         <div className="modal-sheet__header">
           <h2>{title}</h2>
           <button
+            autoFocus
             className="icon-button"
             type="button"
             onClick={onClose}
