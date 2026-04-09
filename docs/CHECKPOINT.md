@@ -1,7 +1,7 @@
 # Checkpoint de Continuidad
 
 ## Estado real
-La aplicación quedó llevada hasta el bloque final funcional de `docs/FINAL_STEP.md`.
+La aplicación quedó llevada hasta el estado final funcional y solo tiene pendiente la verificación final en un entorno con Node.
 
 ### Ya cerrado en código
 - PWA mínima real:

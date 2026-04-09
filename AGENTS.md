@@ -7,16 +7,12 @@ This repository is a Vite + React application with SQLite as the persistence lay
 - `TODO.md`: full product brief and final acceptance criteria
 - `AGENTS.md`: contributor rules, repository expectations, and document map
 - `docs/CHECKPOINT.md`: current project memory, implemented scope, startup flow, and next recommended step
-- `docs/FINAL_STEP.md`: final completion plan, pending scope, interaction audit, editability requirements, and release-close checklist
-- `docs/SIGUIENTE_PASO.md`: concrete next implementation block with ordered files and validation steps
 - `docs/ARQUITECTURA_SQLITE.md`: SQLite layout, commands, schema notes, and persistence rules
-- `docs/PLAN_IMPLEMENTACION.md`: execution order from most critical to least critical
 - `docs/CHECKLIST_TECNICO.md`: file-by-file and component-by-component implementation checklist
-- `docs/MILESTONES.md`: recommended delivery sequence and commit/milestone plan
 - `server/app.js`: local API over SQLite for frontend hydration and first write flows
 
-When resuming the project after a gap or in a new chat, read `docs/CHECKPOINT.md` first, then `docs/FINAL_STEP.md`, then `docs/SIGUIENTE_PASO.md`, then `TODO.md`, then the relevant file in `docs/`. If the goal is to finish the app completely, `docs/FINAL_STEP.md` is the main entry point and takes precedence over any vaguer "hardening" note elsewhere. When work touches business logic, rankings, forms, persistence, maps, exports, edit flows, or item details, check `TODO.md` first, then use the corresponding document in `docs/` to decide order and scope. When work touches saved entities, schema, seed data, or public share tokens, inspect `server/db/` and `docs/ARQUITECTURA_SQLITE.md` before changing frontend code.
-If `docs/FINAL_STEP.md` already says the block is executed, do not restart a broad audit; continue from `docs/CHECKPOINT.md` and limit the session to verification or targeted fixes.
+When resuming the project after a gap or in a new chat, read `docs/CHECKPOINT.md` first, then `TODO.md`, then the relevant file in `docs/`. `docs/CHECKPOINT.md` is the source of truth for current continuity state and next recommended step. When work touches business logic, rankings, forms, persistence, maps, exports, edit flows, or item details, check `TODO.md` first, then use the corresponding document in `docs/` to decide order and scope. When work touches saved entities, schema, seed data, or public share tokens, inspect `server/db/` and `docs/ARQUITECTURA_SQLITE.md` before changing frontend code.
+If `docs/CHECKPOINT.md` already says implementation is closed in code, do not restart a broad audit; limit the session to verification or targeted fixes.
 
 ## Current Map Stack
 The project currently uses **Leaflet + OpenStreetMap** as the real map implementation for both the main map and the restaurant mini map. Do not assume Google Maps is the active provider unless a future task explicitly reintroduces it. Current map behavior that contributors should preserve:
@@ -66,9 +62,6 @@ There is no automated test suite yet, so every change must pass `npm run lint` a
 ## Continuation Rule
 Before starting any new implementation block, update or at least verify:
 - `docs/CHECKPOINT.md`
-- `docs/FINAL_STEP.md`
-- `docs/SIGUIENTE_PASO.md`
 - `docs/CHECKLIST_TECNICO.md`
-- `docs/MILESTONES.md`
 
 This repository should always preserve a resumable state for future Codex sessions.
