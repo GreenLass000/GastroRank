@@ -45,7 +45,7 @@ export function ScoreInput({ label, name, value, onChange }) {
   return (
     <article className="score-card">
       <div className="ranking-card__meta">
-        <strong>{label}</strong>
+        <strong className="score-card__label">{label}</strong>
         {isEditingExactValue ? (
           <input
             ref={inputRef}

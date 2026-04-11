@@ -14,6 +14,7 @@ const MODE_OPTIONS = {
 export function ImageInput({
   error = '',
   fileName = '',
+  inputVariant = 'default',
   label = 'Foto',
   mode = 'url',
   onChange,
@@ -69,25 +70,60 @@ export function ImageInput({
     }
   }
 
+  const isCaptureActionsVariant = inputVariant === 'capture-actions'
+
   return (
     <div className="image-input">
       <div className="image-input__header">
         <span>{label}</span>
-        <div className="pill-row">
-          {Object.entries(MODE_OPTIONS).map(([optionValue, optionLabel]) => (
-            <button
-              key={optionValue}
-              className={`pill-button${mode === optionValue ? ' chip chip--active' : ''}`}
-              type="button"
-              onClick={() => handleModeSelection(optionValue)}
-            >
-              {optionLabel}
-            </button>
-          ))}
-        </div>
+        {!isCaptureActionsVariant ? (
+          <div className="pill-row">
+            {Object.entries(MODE_OPTIONS).map(([optionValue, optionLabel]) => (
+              <button
+                key={optionValue}
+                className={`pill-button${mode === optionValue ? ' chip chip--active' : ''}`}
+                type="button"
+                onClick={() => handleModeSelection(optionValue)}
+              >
+                {optionLabel}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div>
 
-      {mode === 'file' ? (
+      {isCaptureActionsVariant ? (
+        <label className="field">
+          <span>Añade una foto del plato</span>
+          <div className="image-input__actions">
+            <label className="pill-button image-input__action">
+              <span>📷 Hacer foto</span>
+              <input
+                className="image-input__native-input"
+                type="file"
+                accept={IMAGE_INPUT_ACCEPT}
+                capture="environment"
+                onChange={handleFileChange}
+              />
+            </label>
+            <label className="pill-button image-input__action">
+              <span>🖼️ Elegir de la galería</span>
+              <input
+                className="image-input__native-input"
+                type="file"
+                accept={IMAGE_INPUT_ACCEPT}
+                onChange={handleFileChange}
+              />
+            </label>
+          </div>
+          <p className="image-input__meta">
+            Formatos: jpg, jpeg, png, webp, heic. Tamaño máximo: 25MB. Si supera 1MB, se comprime antes de guardar.
+          </p>
+          {localFileName ? (
+            <p className="image-input__meta">Archivo preparado: {localFileName}</p>
+          ) : null}
+        </label>
+      ) : mode === 'file' ? (
         <label className="field">
           <span>Selecciona un archivo</span>
           <input
@@ -127,7 +163,11 @@ export function ImageInput({
       ) : (
         <div className="image-input__preview image-input__preview--empty">
           <strong>Sin imagen seleccionada</strong>
-          <p>Elige un archivo o pega una URL para ver la vista previa.</p>
+          <p>
+            {isCaptureActionsVariant
+              ? 'Haz una foto o elige una imagen de la galería para ver la vista previa.'
+              : 'Elige un archivo o pega una URL para ver la vista previa.'}
+          </p>
         </div>
       )}
 

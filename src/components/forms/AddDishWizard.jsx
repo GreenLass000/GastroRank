@@ -10,14 +10,14 @@ import {
   validateDishTypePayload,
 } from '../../lib/validation.js'
 import { ImageInput } from './ImageInput.jsx'
-import { RestaurantForm } from './RestaurantForm.jsx'
 import { ScoreInput } from './ScoreInput.jsx'
 
+const RESTAURANT_PAGE_SIZE = 5
+
 const STEPS = [
-  'Restaurante',
-  'Categoría',
-  'Tipo de plato',
+  'Nombre y categoría',
   'Puntuación',
+  'Restaurante',
   'Detalles',
 ]
 
@@ -46,6 +46,12 @@ const SCORE_FIELDS = [
   { key: 'presentacion', label: 'Presentación' },
   { key: 'calidad_precio', label: 'Calidad / precio' },
 ]
+
+const STEP_PEEK_HINTS = {
+  Puntuación: 'Valora sabor, textura, presentación y calidad-precio.',
+  Restaurante: 'Elige un sitio cercano o crea uno nuevo.',
+  Detalles: 'Añade notas, fecha, visibilidad y foto.',
+}
 
 function buildInitialForm(entryToEdit) {
   if (!entryToEdit) {
@@ -99,7 +105,7 @@ export function AddDishWizard({
     currentUser,
     dishEntries,
     dishTypes,
-    restaurants,
+    homeNearbySection,
     updateDishEntry,
   } = useAppState()
   const [activeStep, setActiveStep] = useState(mode === 'edit' ? STEPS.length - 1 : 0)
@@ -107,35 +113,80 @@ export function AddDishWizard({
   const [status, setStatus] = useState({ tone: '', message: '' })
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [restaurantQuery, setRestaurantQuery] = useState('')
-  const [showInlineRestaurantForm, setShowInlineRestaurantForm] = useState(false)
+  const [visibleRestaurantCount, setVisibleRestaurantCount] = useState(
+    RESTAURANT_PAGE_SIZE,
+  )
   const [showCategoryCreator, setShowCategoryCreator] = useState(false)
-  const [showDishTypeCreator, setShowDishTypeCreator] = useState(false)
   const [categoryDraft, setCategoryDraft] = useState({ nombre: '', icono: '🍽️' })
   const [dishTypeDraft, setDishTypeDraft] = useState({ nombre: '', alias: '' })
 
   useEffect(() => {
     setForm(buildInitialForm(entryToEdit))
     setActiveStep(mode === 'edit' ? STEPS.length - 1 : 0)
+
+    if (!entryToEdit?.tipo_plato_id) {
+      setDishTypeDraft({ nombre: '', alias: '' })
+    }
   }, [entryToEdit, mode])
 
+  useEffect(() => {
+    if (!entryToEdit?.tipo_plato_id) {
+      return
+    }
+
+    const dishTypeToEdit =
+      dishTypes.find((dishType) => dishType.id === entryToEdit.tipo_plato_id) ?? null
+
+    if (!dishTypeToEdit) {
+      return
+    }
+
+    setDishTypeDraft({
+      nombre: dishTypeToEdit.nombre || '',
+      alias: dishTypeToEdit.alias || '',
+    })
+  }, [dishTypes, entryToEdit?.tipo_plato_id])
+
   const filteredRestaurants = useMemo(() => {
+    const nearbyRestaurants = homeNearbySection?.restaurants ?? []
+
     if (!restaurantQuery.trim()) {
-      return restaurants
+      return nearbyRestaurants
     }
 
     const query = normalizeEntityName(restaurantQuery)
-    return restaurants.filter((restaurant) =>
+    return nearbyRestaurants.filter((restaurant) =>
       normalizeEntityName(
         `${restaurant.nombre} ${restaurant.direccion_texto} ${restaurant.nombre_normalizado}`,
       ).includes(query),
     )
-  }, [restaurantQuery, restaurants])
+  }, [homeNearbySection?.restaurants, restaurantQuery])
+
+  const visibleRestaurants = useMemo(
+    () => filteredRestaurants.slice(0, visibleRestaurantCount),
+    [filteredRestaurants, visibleRestaurantCount],
+  )
+
+  const hasMoreRestaurants = visibleRestaurants.length < filteredRestaurants.length
 
   const availableDishTypes = useMemo(
     () =>
       dishTypes.filter((dishType) => dishType.categoria_id === form.categoria_id),
     [dishTypes, form.categoria_id],
   )
+
+  const matchedDishType = useMemo(() => {
+    if (!form.categoria_id || !dishTypeDraft.nombre.trim()) {
+      return null
+    }
+
+    const normalizedDraftName = normalizeEntityName(dishTypeDraft.nombre)
+    return (
+      availableDishTypes.find(
+        (dishType) => normalizeEntityName(dishType.nombre) === normalizedDraftName,
+      ) ?? null
+    )
+  }, [availableDishTypes, dishTypeDraft.nombre, form.categoria_id])
 
   const liveScore = useMemo(
     () =>
@@ -148,11 +199,17 @@ export function AddDishWizard({
     [form.calidad_precio, form.presentacion, form.sabor, form.textura],
   )
 
-  const recentRestaurants = [...restaurants]
-    .sort((left, right) => new Date(right.created_at) - new Date(left.created_at))
-    .slice(0, 3)
-  const currentPhotoValue =
-    form.photoMode === 'file' ? form.photoFileValue : form.photoUrlValue
+  const hasAnyScore = useMemo(
+    () =>
+      SCORE_FIELDS.some((field) => {
+        const numericValue = Number(form[field.key])
+        return Number.isFinite(numericValue) && numericValue > 0
+      }),
+    [form],
+  )
+
+  const currentPhotoValue = form.photoFileValue || form.photoUrlValue
+  const nextStep = STEPS[activeStep + 1] ?? ''
 
   function updateField(name, value) {
     setForm((current) => ({
@@ -163,7 +220,6 @@ export function AddDishWizard({
 
   function selectRestaurant(restaurantId) {
     updateField('restaurant_id', restaurantId)
-    setShowInlineRestaurantForm(false)
     setStatus({ tone: '', message: '' })
   }
 
@@ -176,31 +232,132 @@ export function AddDishWizard({
     }))
   }
 
+  function selectDishType(dishType) {
+    setDishTypeDraft({
+      nombre: dishType.nombre || '',
+      alias: dishType.alias || '',
+    })
+    updateField('tipo_plato_id', dishType.id)
+    setStatus({ tone: '', message: '' })
+  }
+
+  useEffect(() => {
+    setVisibleRestaurantCount(RESTAURANT_PAGE_SIZE)
+  }, [restaurantQuery, filteredRestaurants.length])
+
+  function canResolveDishTypeStep() {
+    if (!form.categoria_id || !dishTypeDraft.nombre.trim()) {
+      return false
+    }
+
+    if (matchedDishType) {
+      return true
+    }
+
+    try {
+      validateDishTypePayload(
+        {
+          categoria_id: form.categoria_id,
+          nombre: dishTypeDraft.nombre,
+          alias: dishTypeDraft.alias,
+          scope: 'usuario',
+          created_by_user_id: currentUser.id,
+        },
+        dishTypes,
+      )
+      return true
+    } catch {
+      return false
+    }
+  }
+
   function validateStep(stepIndex) {
-    if (stepIndex === 0 && !form.restaurant_id) {
-      return 'Selecciona un restaurante o crea uno nuevo.'
+    if (stepIndex === 0) {
+      if (!form.categoria_id) {
+        return 'Selecciona una categoría para continuar.'
+      }
+
+      if (!dishTypeDraft.nombre.trim()) {
+        return 'Escribe qué plato vas a puntuar para continuar.'
+      }
+
+      if (!canResolveDishTypeStep()) {
+        return 'Revisa el nombre del plato para poder reutilizarlo o crearlo antes de avanzar.'
+      }
     }
 
-    if (stepIndex === 1 && !form.categoria_id) {
-      return 'Selecciona una categoría para continuar.'
+    if (stepIndex === 1) {
+      if (!hasAnyScore) {
+        return 'Mueve al menos un control de puntuación para continuar.'
+      }
     }
 
-    if (stepIndex === 2 && !form.tipo_plato_id) {
-      return 'Selecciona un tipo de plato o créalo al vuelo.'
+    if (stepIndex === 2) {
+      if (!form.restaurant_id) {
+        return 'Selecciona un restaurante o crea uno nuevo.'
+      }
     }
 
     return ''
   }
 
-  function goNext() {
+  function isNextButtonDisabled() {
+    if (activeStep === 1) {
+      return !hasAnyScore
+    }
+
+    return false
+  }
+
+  async function resolveDishTypeStep() {
+    if (matchedDishType) {
+      if (form.tipo_plato_id !== matchedDishType.id) {
+        updateField('tipo_plato_id', matchedDishType.id)
+      }
+
+      return matchedDishType.id
+    }
+
+    const payload = validateDishTypePayload(
+      {
+        categoria_id: form.categoria_id,
+        nombre: dishTypeDraft.nombre,
+        alias: dishTypeDraft.alias,
+        scope: 'usuario',
+        created_by_user_id: currentUser.id,
+      },
+      dishTypes,
+    )
+    const response = await createDishType(payload)
+
+    setDishTypeDraft({
+      nombre: response.dishType.nombre || payload.nombre,
+      alias: response.dishType.alias || payload.alias || '',
+    })
+    updateField('tipo_plato_id', response.dishType.id)
+    return response.dishType.id
+  }
+
+  async function goNext() {
     const error = validateStep(activeStep)
     if (error) {
       setStatus({ tone: 'error', message: `Error al guardar ❌ — ${error}` })
       return
     }
 
-    setStatus({ tone: '', message: '' })
-    setActiveStep((current) => Math.min(current + 1, STEPS.length - 1))
+    try {
+      if (activeStep === 0) {
+        await resolveDishTypeStep()
+      }
+
+      setStatus({ tone: '', message: '' })
+      setActiveStep((current) => Math.min(current + 1, STEPS.length - 1))
+    } catch (error) {
+      setStatus({
+        tone: 'error',
+        message: `Error al guardar ❌ — ${error instanceof Error ? error.message : 'No se pudo preparar el plato.'}`,
+      })
+    }
   }
 
   function goBack() {
@@ -227,30 +384,6 @@ export function AddDishWizard({
       setStatus({
         tone: 'error',
         message: `Error al guardar ❌ — ${error instanceof Error ? error.message : 'No se pudo crear la categoría.'}`,
-      })
-    }
-  }
-
-  async function handleCreateDishType() {
-    try {
-      const payload = validateDishTypePayload(
-        {
-          categoria_id: form.categoria_id,
-          nombre: dishTypeDraft.nombre,
-          alias: dishTypeDraft.alias,
-          scope: 'usuario',
-          created_by_user_id: currentUser.id,
-        },
-        dishTypes,
-      )
-      const response = await createDishType(payload)
-      updateField('tipo_plato_id', response.dishType.id)
-      setDishTypeDraft({ nombre: '', alias: '' })
-      setShowDishTypeCreator(false)
-    } catch (error) {
-      setStatus({
-        tone: 'error',
-        message: `Error al guardar ❌ — ${error instanceof Error ? error.message : 'No se pudo crear el tipo de plato.'}`,
       })
     }
   }
@@ -324,81 +457,44 @@ export function AddDishWizard({
 
       {activeStep === 0 ? (
         <>
-          <label className="field">
-            <span>Buscar restaurante existente</span>
-            <input
-              type="text"
-              value={restaurantQuery}
-              onChange={(event) => setRestaurantQuery(event.target.value)}
-              placeholder="Busca por nombre o dirección"
-            />
-          </label>
-
-          <div className="section-header">
-            <h2>Restaurantes recientes</h2>
-            <button
-              type="button"
-              onClick={() => setShowInlineRestaurantForm((value) => !value)}
-            >
-              + Crear nuevo
-            </button>
-          </div>
-
-          <div className="list-stack">
-            {recentRestaurants.map((restaurant) => (
-              <button
-                key={restaurant.id}
-                className={`selection-card${form.restaurant_id === restaurant.id ? ' selection-card--active' : ''}`}
-                type="button"
-                onClick={() => selectRestaurant(restaurant.id)}
-              >
-                <strong>{restaurant.nombre}</strong>
-                <p>
-                  {restaurant.direccion_texto} • {restaurant.precio_rango}
-                </p>
-              </button>
-            ))}
-          </div>
-
-          <div className="section-header">
-            <h2>Resultados</h2>
-            <button type="button" onClick={onOpenRestaurantForm}>
-              Abrir formulario completo
-            </button>
-          </div>
-
-          <div className="list-stack">
-            {filteredRestaurants.map((restaurant) => (
-              <button
-                key={restaurant.id}
-                className={`selection-card${form.restaurant_id === restaurant.id ? ' selection-card--active' : ''}`}
-                type="button"
-                onClick={() => selectRestaurant(restaurant.id)}
-              >
-                <strong>{restaurant.nombre}</strong>
-                <p>
-                  {restaurant.direccion_texto} • {restaurant.precio_rango} •{' '}
-                  {(restaurant.tags ?? []).slice(0, 3).join(', ')}
-                </p>
-              </button>
-            ))}
-          </div>
-
-          {showInlineRestaurantForm ? (
-            <div className="inline-creator">
-              <RestaurantForm
-                onClose={() => setShowInlineRestaurantForm(false)}
-                onSaved={(restaurant) => {
-                  selectRestaurant(restaurant.id)
+          <div className="dish-step-one">
+            <label className="field">
+              <span>¿Qué plato vas a puntuar?</span>
+              <input
+                type="text"
+                value={dishTypeDraft.nombre}
+                onChange={(event) => {
+                  const nextValue = event.target.value
+                  setDishTypeDraft((current) => ({
+                    ...current,
+                    nombre: nextValue,
+                  }))
+                  updateField('tipo_plato_id', '')
                 }}
+                placeholder="Ej. Croquetas, ramen, tortilla..."
               />
-            </div>
-          ) : null}
-        </>
-      ) : null}
+            </label>
 
-      {activeStep === 1 ? (
-        <>
+            <label className="field dish-step-one__alias">
+              <span>¿Cómo lo llamarías tú? 😄</span>
+              <input
+                type="text"
+                value={dishTypeDraft.alias}
+                onChange={(event) =>
+                  setDishTypeDraft((current) => ({
+                    ...current,
+                    alias: event.target.value,
+                  }))
+                }
+                placeholder="Opcional"
+              />
+            </label>
+          </div>
+
+          <div className="section-header">
+            <h2>Categoría</h2>
+          </div>
+
           <div className="category-grid">
             {categories.map((category) => (
               <button
@@ -411,15 +507,15 @@ export function AddDishWizard({
                 <strong>{category.nombre}</strong>
               </button>
             ))}
+            <button
+              className="category-card category-card--create"
+              type="button"
+              onClick={() => setShowCategoryCreator((value) => !value)}
+            >
+              <span aria-hidden="true">＋</span>
+              <strong>Nueva categoría</strong>
+            </button>
           </div>
-
-          <button
-            className="pill-button"
-            type="button"
-            onClick={() => setShowCategoryCreator((value) => !value)}
-          >
-            + Crear categoría
-          </button>
 
           {showCategoryCreator ? (
             <div className="inline-creator">
@@ -460,76 +556,53 @@ export function AddDishWizard({
               </button>
             </div>
           ) : null}
-        </>
-      ) : null}
 
-      {activeStep === 2 ? (
-        <>
-          <div className="list-stack">
-            {availableDishTypes.map((dishType) => (
-              <button
-                key={dishType.id}
-                className={`selection-card${form.tipo_plato_id === dishType.id ? ' selection-card--active' : ''}`}
-                type="button"
-                onClick={() => updateField('tipo_plato_id', dishType.id)}
-              >
-                <strong>{dishType.nombre}</strong>
-                <p>{dishType.alias || 'Sin alias'}</p>
-              </button>
-            ))}
+          <div className="section-header">
+            <h2>Platos ya creados en esta categoría</h2>
           </div>
 
-          <button
-            className="pill-button"
-            type="button"
-            onClick={() => setShowDishTypeCreator((value) => !value)}
-          >
-            + Crear tipo de plato
-          </button>
+          {form.categoria_id ? (
+            <>
+              {availableDishTypes.length > 0 ? (
+                <div className="list-stack dish-type-suggestions">
+                  {availableDishTypes.map((dishType) => (
+                    <button
+                      key={dishType.id}
+                      className={`selection-card${form.tipo_plato_id === dishType.id || matchedDishType?.id === dishType.id ? ' selection-card--active' : ''}`}
+                      type="button"
+                      onClick={() => selectDishType(dishType)}
+                    >
+                      <strong>{dishType.nombre}</strong>
+                      <p>{dishType.alias || 'Sin alias'}</p>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="filter-empty">
+                  Aún no hay platos guardados en esta categoría. Si sigues, se creará
+                  uno nuevo con este nombre.
+                </p>
+              )}
 
-          {showDishTypeCreator ? (
-            <div className="inline-creator">
-              <label className="field">
-                <span>Nombre</span>
-                <input
-                  type="text"
-                  value={dishTypeDraft.nombre}
-                  onChange={(event) =>
-                    setDishTypeDraft((current) => ({
-                      ...current,
-                      nombre: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-              <label className="field">
-                <span>Alias</span>
-                <input
-                  type="text"
-                  value={dishTypeDraft.alias}
-                  onChange={(event) =>
-                    setDishTypeDraft((current) => ({
-                      ...current,
-                      alias: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-              <button
-                className="primary-button"
-                type="button"
-                onClick={handleCreateDishType}
-              >
-                Guardar tipo de plato
-              </button>
-            </div>
-          ) : null}
+              {dishTypeDraft.nombre.trim() ? (
+                <p className="dish-step-one__helper">
+                  {matchedDishType
+                    ? `Usaremos el tipo existente "${matchedDishType.nombre}".`
+                    : 'No existe coincidencia exacta todavía. Al seguir, se creará este tipo de plato.'}
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <p className="filter-empty">
+              Elige primero una categoría para ver los platos ya creados.
+            </p>
+          )}
         </>
       ) : null}
 
-      {activeStep === 3 ? (
+      {activeStep === 1 ? (
         <>
-          <div className="list-stack">
+          <div className="list-stack score-step">
             {SCORE_FIELDS.map((field) => (
               <ScoreInput
                 key={field.key}
@@ -547,21 +620,90 @@ export function AddDishWizard({
               {formatScore(liveScore)}
             </span>
           </div>
+
+          {!hasAnyScore ? (
+            <p className="score-step__hint">
+              Mueve al menos un slider para desbloquear el siguiente paso.
+            </p>
+          ) : null}
         </>
       ) : null}
 
-      {activeStep === 4 ? (
+      {activeStep === 2 ? (
         <>
           <label className="field">
-            <span>Nombre libre del plato</span>
+            <span>Buscar restaurante existente</span>
             <input
               type="text"
-              value={form.nombre_plato}
-              onChange={(event) => updateField('nombre_plato', event.target.value)}
-              placeholder="Ej. Croqueta cremosa del día"
+              value={restaurantQuery}
+              onChange={(event) => setRestaurantQuery(event.target.value)}
+              placeholder="Busca por nombre o dirección"
             />
           </label>
 
+          <div className="section-header">
+            <h2>
+              Cercanos a {homeNearbySection?.originLabel?.toLowerCase() || 'tu ubicación'}
+            </h2>
+          </div>
+
+          {visibleRestaurants.length > 0 ? (
+            <div className="list-stack">
+              {visibleRestaurants.map((restaurant) => (
+                <button
+                  key={restaurant.id}
+                  className={`selection-card restaurant-selection-card${form.restaurant_id === restaurant.id ? ' selection-card--active' : ''}`}
+                  type="button"
+                  onClick={() => selectRestaurant(restaurant.id)}
+                >
+                  <div className="restaurant-selection-card__header">
+                    <strong>{restaurant.nombre}</strong>
+                    <span className="status-pill">{restaurant.distanceLabel}</span>
+                  </div>
+                  <p>{restaurant.direccion_texto}</p>
+                  <div className="restaurant-selection-card__meta">
+                    <span className="status-pill">{restaurant.precio_rango}</span>
+                    {(restaurant.tags ?? []).slice(0, 2).map((tag) => (
+                      <span key={`${restaurant.id}-${tag}`} className="status-pill">
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="filter-empty">
+              No hay restaurantes cercanos que coincidan con esa búsqueda.
+            </p>
+          )}
+
+          {hasMoreRestaurants ? (
+            <button
+              className="pill-button"
+              type="button"
+              onClick={() =>
+                setVisibleRestaurantCount(
+                  (current) => current + RESTAURANT_PAGE_SIZE,
+                )
+              }
+            >
+              Mostrar más
+            </button>
+          ) : null}
+
+          <button
+            className="pill-button restaurant-create-button"
+            type="button"
+            onClick={onOpenRestaurantForm}
+          >
+            ＋ Crear nuevo restaurante
+          </button>
+        </>
+      ) : null}
+
+      {activeStep === 3 ? (
+        <>
           <label className="field">
             <span>Notas</span>
             <textarea
@@ -607,27 +749,29 @@ export function AddDishWizard({
 
           <ImageInput
             label="Foto del plato"
-            mode={form.photoMode}
+            inputVariant="capture-actions"
+            mode="file"
             value={currentPhotoValue}
             fileName={form.photoFileName}
-            onModeChange={(nextMode) => updateField('photoMode', nextMode)}
             onChange={({ fileName, value }) => {
-              if (form.photoMode === 'file') {
-                setForm((current) => ({
-                  ...current,
-                  photoFileName: fileName,
-                  photoFileValue: value,
-                }))
-                return
-              }
-
               setForm((current) => ({
                 ...current,
-                photoUrlValue: value,
+                photoMode: 'file',
+                photoFileName: fileName,
+                photoFileValue: value,
+                photoUrlValue: '',
               }))
             }}
           />
         </>
+      ) : null}
+
+      {nextStep ? (
+        <div className="wizard-next-peek" aria-hidden="true">
+          <span className="wizard-next-peek__label">Siguiente paso</span>
+          <strong className="wizard-next-peek__title">{nextStep}</strong>
+          <p>{STEP_PEEK_HINTS[nextStep] || 'Continúa con el siguiente bloque del formulario.'}</p>
+        </div>
       ) : null}
 
       {status.message ? (
@@ -646,7 +790,12 @@ export function AddDishWizard({
           {activeStep === 0 ? 'Cerrar' : 'Atrás'}
         </button>
         {activeStep < STEPS.length - 1 ? (
-          <button className="primary-button" type="button" onClick={goNext}>
+          <button
+            className="primary-button"
+            type="button"
+            onClick={goNext}
+            disabled={isNextButtonDisabled()}
+          >
             Siguiente
           </button>
         ) : (
