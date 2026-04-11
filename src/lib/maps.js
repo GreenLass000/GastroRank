@@ -3,6 +3,47 @@ export const DEFAULT_MAP_CENTER = {
   lng: -4.7245,
 }
 
+const EARTH_RADIUS_METERS = 6371000
+
+export const DEFAULT_HOME_NEARBY_RADIUS_ID = '500m'
+export const HOME_NEARBY_RADIUS_OPTIONS = Object.freeze([
+  {
+    id: '100m',
+    meters: 100,
+    zoom: 18,
+  },
+  {
+    id: '250m',
+    meters: 250,
+    zoom: 17,
+  },
+  {
+    id: DEFAULT_HOME_NEARBY_RADIUS_ID,
+    meters: 500,
+    zoom: 16,
+  },
+  {
+    id: '1km',
+    meters: 1000,
+    zoom: 15,
+  },
+  {
+    id: '2km',
+    meters: 2000,
+    zoom: 14,
+  },
+  {
+    id: '5km',
+    meters: 5000,
+    zoom: 13,
+  },
+  {
+    id: '10km',
+    meters: 10000,
+    zoom: 12,
+  },
+])
+
 const NOMINATIM_BASE_URL =
   import.meta.env.VITE_NOMINATIM_BASE_URL?.trim() ||
   'https://nominatim.openstreetmap.org'
@@ -40,12 +81,53 @@ export function hasValidCoordinates(point) {
   return Number.isFinite(lat) && Number.isFinite(lng)
 }
 
+export function calculateDistanceMeters(origin, destination) {
+  if (!hasValidCoordinates(origin) || !hasValidCoordinates(destination)) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  const originLat = (Number(origin.lat) * Math.PI) / 180
+  const destinationLat = (Number(destination.lat) * Math.PI) / 180
+  const latDifference = ((Number(destination.lat) - Number(origin.lat)) * Math.PI) / 180
+  const lngDifference = ((Number(destination.lng) - Number(origin.lng)) * Math.PI) / 180
+  const haversineValue =
+    Math.sin(latDifference / 2) * Math.sin(latDifference / 2) +
+    Math.cos(originLat) *
+      Math.cos(destinationLat) *
+      Math.sin(lngDifference / 2) *
+      Math.sin(lngDifference / 2)
+
+  return (
+    2 *
+    EARTH_RADIUS_METERS *
+    Math.atan2(Math.sqrt(haversineValue), Math.sqrt(1 - haversineValue))
+  )
+}
+
+export function getHomeNearbyRadiusOption(radiusId) {
+  return (
+    HOME_NEARBY_RADIUS_OPTIONS.find((option) => option.id === radiusId) ??
+    HOME_NEARBY_RADIUS_OPTIONS.find(
+      (option) => option.id === DEFAULT_HOME_NEARBY_RADIUS_ID,
+    ) ??
+    HOME_NEARBY_RADIUS_OPTIONS[0]
+  )
+}
+
 export function generateGoogleMapsUrl(point) {
   if (!hasValidCoordinates(point)) {
     return ''
   }
 
   return `https://maps.google.com/?q=${Number(point.lat)},${Number(point.lng)}`
+}
+
+export function generateGoogleMapsDirectionsUrl(point) {
+  if (!hasValidCoordinates(point)) {
+    return ''
+  }
+
+  return `https://www.google.com/maps/dir/?api=1&destination=${Number(point.lat)},${Number(point.lng)}`
 }
 
 export function buildPlaceSuggestions(query, restaurants) {

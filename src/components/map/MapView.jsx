@@ -32,7 +32,12 @@ function getToneClass(score) {
   return 'leaflet-pin--bad'
 }
 
-function buildLeafletPinMarkup(marker, pinStyle, isActive, isDraft = false) {
+function buildLeafletPinMarkup(
+  marker,
+  pinStyle,
+  isActive,
+  { isDraft = false, isFocus = false } = {},
+) {
   const effectivePinStyle = marker.pinStyle || pinStyle
   let content = '<span class="leaflet-pin__dot" aria-hidden="true"></span>'
 
@@ -56,7 +61,7 @@ function buildLeafletPinMarkup(marker, pinStyle, isActive, isDraft = false) {
 
   const classes = [
     'leaflet-pin',
-    isDraft ? 'leaflet-pin--draft' : getToneClass(marker.score),
+    isFocus ? 'leaflet-pin--focus' : isDraft ? 'leaflet-pin--draft' : getToneClass(marker.score),
     isActive ? 'leaflet-pin--active' : '',
   ]
     .filter(Boolean)
@@ -153,6 +158,11 @@ function clusterMarkers(markers, map, zoom, selectedMarkerId) {
 
 export function MapView({
   allowAutoLocate = false,
+  center = null,
+  className = '',
+  emptyDescription,
+  emptyTitle,
+  focusMarker = null,
   instructionLabel,
   markers = [],
   mode = 'full',
@@ -160,7 +170,9 @@ export function MapView({
   onSelectMarker,
   pinStyle = 'Punto',
   selectedMarkerId = '',
+  showTopline = true,
   tempMarker = null,
+  zoom = null,
 }) {
   const onLongPressRef = useRef(onLongPress)
   const onSelectMarkerRef = useRef(onSelectMarker)
@@ -170,7 +182,22 @@ export function MapView({
   const markerLayerRef = useRef(null)
   const hasInitialFitRef = useRef(false)
   const didResolveInitialCenterRef = useRef(false)
-  const [currentZoom, setCurrentZoom] = useState(mode === 'mini' ? 14 : 13)
+  const controlledCenter = useMemo(
+    () =>
+      hasValidCoordinates(center)
+        ? {
+            lat: Number(center.lat),
+            lng: Number(center.lng),
+          }
+        : null,
+    [center],
+  )
+  const controlledZoom = Number.isFinite(zoom) ? Number(zoom) : null
+  const isControlledViewport =
+    Boolean(controlledCenter) && Number.isFinite(controlledZoom)
+  const initialZoom = controlledZoom ?? (mode === 'mini' ? 14 : 13)
+  const [currentZoom, setCurrentZoom] = useState(initialZoom)
+  const effectiveZoom = controlledZoom ?? currentZoom
   const pressStateRef = useRef({
     clientX: 0,
     clientY: 0,
@@ -184,6 +211,22 @@ export function MapView({
     [markers],
   )
   const provider = getMapsProvider()
+  const effectiveFocusMarker = useMemo(
+    () =>
+      hasValidCoordinates(focusMarker)
+        ? {
+            id: focusMarker.id || 'focus-location',
+            nombre: focusMarker.nombre || 'Tu ubicación',
+            lat: Number(focusMarker.lat),
+            lng: Number(focusMarker.lng),
+            score: focusMarker.score ?? null,
+            precio_rango: focusMarker.precio_rango || '',
+            categoryIcon: focusMarker.categoryIcon || '📍',
+            cover_photo_url: focusMarker.cover_photo_url || '',
+          }
+        : null,
+    [focusMarker],
+  )
   const draftMarker = useMemo(
     () =>
       hasValidCoordinates(tempMarker)
@@ -216,11 +259,11 @@ export function MapView({
 
     const map = L.map(mapContainerRef.current, {
       attributionControl: false,
-      doubleClickZoom: true,
-      keyboard: mode === 'full',
-      scrollWheelZoom: mode === 'full',
-      touchZoom: true,
-      zoomControl: mode === 'full',
+      doubleClickZoom: !isControlledViewport,
+      keyboard: mode === 'full' && !isControlledViewport,
+      scrollWheelZoom: mode === 'full' && !isControlledViewport,
+      touchZoom: !isControlledViewport,
+      zoomControl: mode === 'full' && !isControlledViewport,
     })
 
     mapRef.current = map
@@ -232,7 +275,12 @@ export function MapView({
     )
     tileLayerRef.current.addTo(map)
     markerLayerRef.current = L.layerGroup().addTo(map)
-    map.setView(VALLADOLID_CENTER, mode === 'mini' ? 14 : 13)
+    map.setView(
+      controlledCenter
+        ? [controlledCenter.lat, controlledCenter.lng]
+        : VALLADOLID_CENTER,
+      initialZoom,
+    )
 
     const clearLongPress = () => {
       if (pressStateRef.current.timerId) {
@@ -332,12 +380,18 @@ export function MapView({
       hasInitialFitRef.current = false
       didResolveInitialCenterRef.current = false
     }
-  }, [mode])
+  }, [controlledCenter, initialZoom, isControlledViewport, mode])
 
   useEffect(() => {
     const map = mapRef.current
 
-    if (!map || mode !== 'full' || !allowAutoLocate || didResolveInitialCenterRef.current) {
+    if (
+      !map ||
+      mode !== 'full' ||
+      !allowAutoLocate ||
+      didResolveInitialCenterRef.current ||
+      isControlledViewport
+    ) {
       return
     }
 
@@ -363,7 +417,23 @@ export function MapView({
         timeout: 5000,
       },
     )
-  }, [allowAutoLocate, mode])
+  }, [allowAutoLocate, isControlledViewport, mode])
+
+  useEffect(() => {
+    const map = mapRef.current
+
+    if (!map || !controlledCenter) {
+      return
+    }
+
+    map.setView(
+      [controlledCenter.lat, controlledCenter.lng],
+      controlledZoom ?? map.getZoom(),
+      {
+        animate: false,
+      },
+    )
+  }, [controlledCenter, controlledZoom])
 
   useEffect(() => {
     const map = mapRef.current
@@ -389,7 +459,7 @@ export function MapView({
 
     const renderItems =
       mode === 'full'
-        ? clusterMarkers(validMarkers, map, currentZoom, selectedMarkerId)
+        ? clusterMarkers(validMarkers, map, effectiveZoom, selectedMarkerId)
         : validMarkers.map((marker) => ({
             type: 'marker',
             id: marker.id,
@@ -409,12 +479,14 @@ export function MapView({
           riseOnHover: true,
         })
 
-        clusterMarker.on('click', () => {
-          map.fitBounds(item.bounds, {
-            maxZoom: Math.min(map.getZoom() + 2, 18),
-            padding: [32, 32],
+        if (!isControlledViewport) {
+          clusterMarker.on('click', () => {
+            map.fitBounds(item.bounds, {
+              maxZoom: Math.min(map.getZoom() + 2, 18),
+              padding: [32, 32],
+            })
           })
-        })
+        }
         clusterMarker.addTo(markerLayer)
         return
       }
@@ -442,18 +514,43 @@ export function MapView({
       markerInstance.addTo(markerLayer)
     })
 
-    if (draftMarker) {
-      L.marker([Number(draftMarker.lat), Number(draftMarker.lng)], {
+    if (effectiveFocusMarker) {
+      L.marker([Number(effectiveFocusMarker.lat), Number(effectiveFocusMarker.lng)], {
         icon: L.divIcon({
           className: 'leaflet-pin-icon',
-          html: buildLeafletPinMarkup(draftMarker, 'Punto', true, true),
+          html: buildLeafletPinMarkup(effectiveFocusMarker, 'Punto', false, {
+            isFocus: true,
+          }),
           iconAnchor: [18, 18],
           iconSize: [36, 36],
         }),
         riseOnHover: true,
       }).addTo(markerLayer)
     }
-  }, [currentZoom, draftMarker, mode, pinStyle, selectedMarkerId, validMarkers])
+
+    if (draftMarker) {
+      L.marker([Number(draftMarker.lat), Number(draftMarker.lng)], {
+        icon: L.divIcon({
+          className: 'leaflet-pin-icon',
+          html: buildLeafletPinMarkup(draftMarker, 'Punto', true, {
+            isDraft: true,
+          }),
+          iconAnchor: [18, 18],
+          iconSize: [36, 36],
+        }),
+        riseOnHover: true,
+      }).addTo(markerLayer)
+    }
+  }, [
+    draftMarker,
+    effectiveZoom,
+    effectiveFocusMarker,
+    isControlledViewport,
+    mode,
+    pinStyle,
+    selectedMarkerId,
+    validMarkers,
+  ])
 
   useEffect(() => {
     const map = mapRef.current
@@ -464,8 +561,15 @@ export function MapView({
 
     const points = [
       ...validMarkers.map((marker) => [Number(marker.lat), Number(marker.lng)]),
+      ...(effectiveFocusMarker
+        ? [[Number(effectiveFocusMarker.lat), Number(effectiveFocusMarker.lng)]]
+        : []),
       ...(draftMarker ? [[Number(draftMarker.lat), Number(draftMarker.lng)]] : []),
     ]
+
+    if (isControlledViewport) {
+      return
+    }
 
     if (points.length === 0) {
       if (mode === 'mini') {
@@ -502,24 +606,36 @@ export function MapView({
         map.panTo([Number(selectedMarker.lat), Number(selectedMarker.lng)])
       }
     }
-  }, [draftMarker, mode, selectedMarkerId, validMarkers])
+  }, [
+    draftMarker,
+    effectiveFocusMarker,
+    isControlledViewport,
+    mode,
+    selectedMarkerId,
+    validMarkers,
+  ])
 
   return (
-    <div className={`map-view map-view--${mode}`}>
-      <div className="map-view__topline">
-        <span className="map-provider-badge">
-          {provider === 'leaflet-osm' ? 'Leaflet + OpenStreetMap' : 'Mapa'}
-        </span>
-        <span>{instructionLabel}</span>
-      </div>
+    <div className={`map-view map-view--${mode}${className ? ` ${className}` : ''}`}>
+      {showTopline ? (
+        <div className="map-view__topline">
+          <span className="map-provider-badge">
+            {provider === 'leaflet-osm' ? 'Leaflet + OpenStreetMap' : 'Mapa'}
+          </span>
+          <span>{instructionLabel}</span>
+        </div>
+      ) : null}
 
       <div className="map-view__surface map-view__surface--leaflet" role="application" aria-label="Mapa interactivo de restaurantes">
         <div className="map-view__leaflet" ref={mapContainerRef} />
         <div className="map-view__attribution">Datos © OpenStreetMap</div>
         {validMarkers.length === 0 && !draftMarker ? (
           <div className="map-view__empty">
-            <strong>Sin puntos todavía</strong>
-            <p>Mantén pulsado 500 ms para fijar una ubicación deliberada.</p>
+            <strong>{emptyTitle || 'Sin puntos todavía'}</strong>
+            <p>
+              {emptyDescription ||
+                'Mantén pulsado 500 ms para fijar una ubicación deliberada.'}
+            </p>
           </div>
         ) : null}
       </div>

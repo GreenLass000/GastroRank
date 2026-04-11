@@ -23,7 +23,12 @@ import {
   normalizeFilters,
 } from '../lib/filters.js'
 import { PIN_STYLES, STORAGE_KEYS } from '../lib/constants.js'
-import { DEFAULT_MAP_CENTER } from '../lib/maps.js'
+import {
+  calculateDistanceMeters,
+  DEFAULT_MAP_CENTER,
+  hasValidCoordinates,
+} from '../lib/maps.js'
+import { formatDistance } from '../lib/format.js'
 import {
   buildCategoryRankings,
   buildDishTypeRankings,
@@ -150,6 +155,82 @@ function buildFilteredRestaurants(restaurants, filteredEntries) {
     })
 }
 
+function buildHomeDishTypeSection({ categories, dishTypes, rankingEntries }) {
+  const rankingEntriesByCategoryId = rankingEntries.reduce((acc, entry) => {
+    acc[entry.categoryId] ??= []
+    acc[entry.categoryId].push(entry)
+    return acc
+  }, {})
+  const rankingEntriesByDishTypeId = rankingEntries.reduce((acc, entry) => {
+    acc[entry.dishTypeId] ??= []
+    acc[entry.dishTypeId].push(entry)
+    return acc
+  }, {})
+  const availableCategoryIds = new Set(rankingEntries.map((entry) => entry.categoryId))
+  const availableDishTypeIds = new Set(rankingEntries.map((entry) => entry.dishTypeId))
+  const availableCategories = categories
+    .filter((category) => availableCategoryIds.has(category.id))
+    .map((category) => ({
+      id: category.id,
+      icon: category.icono,
+      name: category.nombre,
+      rankingCount: rankingEntriesByCategoryId[category.id]?.length ?? 0,
+    }))
+  const availableDishTypes = dishTypes
+    .filter((dishType) => availableDishTypeIds.has(dishType.id))
+    .map((dishType) => ({
+      id: dishType.id,
+      categoryId: dishType.categoria_id,
+      name: dishType.nombre,
+      alias: dishType.alias,
+      rankingCount: rankingEntriesByDishTypeId[dishType.id]?.length ?? 0,
+    }))
+  const dishTypesByCategoryId = availableDishTypes.reduce((acc, dishType) => {
+    acc[dishType.categoryId] ??= []
+    acc[dishType.categoryId].push(dishType)
+    return acc
+  }, {})
+
+  return {
+    categories: availableCategories,
+    dishTypes: availableDishTypes,
+    dishTypesByCategoryId,
+    rankings: rankingEntries,
+    rankingsByCategoryId: rankingEntriesByCategoryId,
+    rankingsByDishTypeId: rankingEntriesByDishTypeId,
+  }
+}
+
+function buildHomeNearbySection({ origin, restaurants }) {
+  const nearbyRestaurants = restaurants
+    .filter((restaurant) => hasValidCoordinates(restaurant))
+    .map((restaurant) => {
+      const distanceMeters = calculateDistanceMeters(origin, restaurant)
+
+      return {
+        ...restaurant,
+        distanceMeters,
+        distanceLabel: formatDistance(distanceMeters),
+      }
+    })
+    .sort(
+      (left, right) =>
+        left.distanceMeters - right.distanceMeters ||
+        right.restaurant_score - left.restaurant_score,
+    )
+
+  return {
+    origin: {
+      lat: Number(origin.lat),
+      lng: Number(origin.lng),
+      source: origin.source,
+    },
+    originLabel:
+      origin.source === 'geolocation' ? 'Tu ubicación actual' : 'Valladolid',
+    restaurants: nearbyRestaurants,
+  }
+}
+
 function buildDerivedState(state, filters, filterOrigin) {
   const currentUser = state.users[0]
   const groupsForCurrentUser = state.groups.filter((group) =>
@@ -222,6 +303,15 @@ function buildDerivedState(state, filters, filterOrigin) {
     entries: state.dishEntries,
     users: state.users,
   })
+  const homeDishTypeSection = buildHomeDishTypeSection({
+    categories: state.categories,
+    dishTypes: state.dishTypes,
+    rankingEntries: rankingContexts.private.dishType,
+  })
+  const homeNearbySection = buildHomeNearbySection({
+    origin: filterOrigin,
+    restaurants: state.restaurants,
+  })
 
   return {
     currentUser,
@@ -251,6 +341,8 @@ function buildDerivedState(state, filters, filterOrigin) {
       ).size,
       grupos: groupsForCurrentUser.length,
     },
+    homeDishTypeSection,
+    homeNearbySection,
     restaurantsByScore,
   }
 }

@@ -14,6 +14,28 @@ This repository is a Vite + React application with SQLite as the persistence lay
 When resuming the project after a gap or in a new chat, read `docs/CHECKPOINT.md` first, then `TODO.md`, then the relevant file in `docs/`. `docs/CHECKPOINT.md` is the source of truth for current continuity state and next recommended step. When work touches business logic, rankings, forms, persistence, maps, exports, edit flows, or item details, check `TODO.md` first, then use the corresponding document in `docs/` to decide order and scope. When work touches saved entities, schema, seed data, or public share tokens, inspect `server/db/` and `docs/ARQUITECTURA_SQLITE.md` before changing frontend code.
 If `docs/CHECKPOINT.md` already says implementation is closed in code, do not restart a broad audit; limit the session to verification or targeted fixes.
 
+## Current Continuity Snapshot
+Current rediseño status for `Inicio`:
+- `Milestone 1`: closed in code
+- `Milestone 2`: closed in code
+- `Milestone 3`: closed in code
+- `Milestone 4`: closed in code
+- `Milestone 5`: closed in code
+
+Current next-step assumption:
+- start from `docs/CHECKPOINT.md`
+- if the environment has Node, run verification (`db:verify`, `lint`, `build`)
+- otherwise limit the session to targeted fixes or visual corrections only
+- do not reopen broad home milestones unless the task is a targeted fix or visual correction
+
+Current files that matter most for the next block:
+- `docs/CHECKPOINT.md`
+- `docs/CHECKLIST_TECNICO.md`
+- `src/screens/HomeScreen.jsx`
+- `src/screens/MapScreen.jsx`
+- `src/components/details/EntityDetailSheet.jsx`
+- `src/App.css`
+
 ## Current Map Stack
 The project currently uses **Leaflet + OpenStreetMap** as the real map implementation for both the main map and the restaurant mini map. Do not assume Google Maps is the active provider unless a future task explicitly reintroduces it. Current map behavior that contributors should preserve:
 - main map tries to center on user geolocation first
@@ -63,5 +85,6 @@ There is no automated test suite yet, so every change must pass `npm run lint` a
 Before starting any new implementation block, update or at least verify:
 - `docs/CHECKPOINT.md`
 - `docs/CHECKLIST_TECNICO.md`
+- `AGENTS.md` when the current milestone status or recommended starting point changes
 
 This repository should always preserve a resumable state for future Codex sessions.

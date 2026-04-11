@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { SectionHeader } from '../components/layout/SectionHeader.jsx'
 import { MapView } from '../components/map/MapView.jsx'
 import { useAppState } from '../hooks/useAppState.js'
-import { formatScore } from '../lib/format.js'
+import { formatScore, formatShortAddress } from '../lib/format.js'
 import { PIN_STYLES } from '../lib/constants.js'
 import { generateGoogleMapsUrl, getMapsProvider } from '../lib/maps.js'
 
@@ -178,7 +178,7 @@ export function MapScreen({
               : ''}
           </p>
           {selectedRestaurant.direccion_texto ? (
-            <p>{selectedRestaurant.direccion_texto}</p>
+            <p>{formatShortAddress(selectedRestaurant.direccion_texto)}</p>
           ) : null}
           <div className="chip-row">
             {PIN_STYLES.map((style) => (
@@ -210,12 +210,18 @@ export function MapScreen({
             >
               Ver detalle
             </button>
+            <button
+              className="primary-button"
+              type="button"
+              onClick={() => {
+                if (selectedRestaurant.mapsUrl) {
+                  window.open(selectedRestaurant.mapsUrl, '_blank', 'noreferrer')
+                }
+              }}
+            >
+              🗺 Cómo llegar
+            </button>
           </div>
-          {selectedRestaurant.mapsUrl ? (
-            <a href={selectedRestaurant.mapsUrl} target="_blank" rel="noreferrer">
-              Abrir en Google Maps
-            </a>
-          ) : null}
         </article>
       ) : null}
 
@@ -234,8 +240,8 @@ export function MapScreen({
           >
             <strong>{restaurant.nombre}</strong>
             <p>
-              {restaurant.precio_rango} • {formatScore(restaurant.restaurant_score)} •{' '}
-              {restaurant.total_entries} platos valorados
+              {formatShortAddress(restaurant.direccion_texto)} •{' '}
+              {formatScore(restaurant.restaurant_score)} • {restaurant.total_entries} platos
             </p>
           </button>
         ))}

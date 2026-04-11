@@ -4,7 +4,9 @@ import {
   formatDate,
   formatRelativePrice,
   formatScore,
+  formatShortAddress,
 } from '../../lib/format.js'
+import { generateGoogleMapsUrl } from '../../lib/maps.js'
 import { getScoreTone } from '../../lib/scoring.js'
 import { AddDishWizard } from '../forms/AddDishWizard.jsx'
 import { CategoryForm } from '../forms/CategoryForm.jsx'
@@ -189,6 +191,8 @@ export function EntityDetailSheet({ target, onClose }) {
     const restaurantEntries = appState.dishEntries
       .filter((entry) => entry.restaurant_id === resolvedEntity.id)
       .sort((left, right) => right.puntuacion_general - left.puntuacion_general)
+    const restaurantMapsUrl =
+      resolvedEntity.google_maps_url || generateGoogleMapsUrl(resolvedEntity)
     const topEntries = restaurantEntries.slice(0, 3).map((entry) => ({
       ...entry,
       dishTypeName:
@@ -204,7 +208,7 @@ export function EntityDetailSheet({ target, onClose }) {
             <div>
               <strong>{resolvedEntity.nombre}</strong>
               <p>
-                {resolvedEntity.direccion_texto || 'Sin dirección'} •{' '}
+                {formatShortAddress(resolvedEntity.direccion_texto)} •{' '}
                 {resolvedEntity.precio_rango}
               </p>
             </div>
@@ -226,9 +230,11 @@ export function EntityDetailSheet({ target, onClose }) {
             <span className="status-pill">
               {resolvedEntity.total_entries} platos valorados
             </span>
-            <span className="status-pill">
-              {resolvedEntity.lat.toFixed(5)}, {resolvedEntity.lng.toFixed(5)}
-            </span>
+            {resolvedEntity.direccion_texto ? (
+              <span className="status-pill">
+                {formatShortAddress(resolvedEntity.direccion_texto)}
+              </span>
+            ) : null}
             {(resolvedEntity.tags ?? []).map((tag) => (
               <span key={tag} className="status-pill">
                 #{tag}
@@ -239,6 +245,17 @@ export function EntityDetailSheet({ target, onClose }) {
             <button className="pill-button" type="button" onClick={onClose}>
               Cerrar
             </button>
+            {restaurantMapsUrl ? (
+              <button
+                className="pill-button"
+                type="button"
+                onClick={() => {
+                  window.open(restaurantMapsUrl, '_blank', 'noreferrer')
+                }}
+              >
+                🗺 Cómo llegar
+              </button>
+            ) : null}
             <button
               className="primary-button"
               type="button"

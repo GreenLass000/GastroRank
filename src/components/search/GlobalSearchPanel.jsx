@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useAppState } from '../../hooks/useAppState.js'
-import { formatDate, formatScore } from '../../lib/format.js'
+import { formatDate, formatScore, formatShortAddress } from '../../lib/format.js'
 import { normalizeEntityName } from '../../lib/validation.js'
 
 function buildSearchResults(query, appState) {
@@ -90,7 +90,8 @@ export function GlobalSearchPanel({ onClose, onOpenEntity }) {
               >
                 <strong>{restaurant.nombre}</strong>
                 <p>
-                  {restaurant.direccion_texto} • {formatScore(restaurant.restaurant_score)}
+                  {formatShortAddress(restaurant.direccion_texto)} •{' '}
+                  {formatScore(restaurant.restaurant_score)}
                 </p>
               </button>
             ))
@@ -117,7 +118,13 @@ export function GlobalSearchPanel({ onClose, onOpenEntity }) {
                 }}
               >
                 <strong>{dishType.nombre}</strong>
-                <p>{dishType.alias || 'Sin alias'}</p>
+                <p>
+                  {dishType.alias ||
+                    appState.categories.find(
+                      (category) => category.id === dishType.categoria_id,
+                    )?.nombre ||
+                    'Sin alias'}
+                </p>
               </button>
             ))
           ) : (

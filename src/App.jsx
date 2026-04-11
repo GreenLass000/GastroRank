@@ -11,7 +11,7 @@ import { FloatingActionButton } from './components/layout/FloatingActionButton.j
 import { ModalSheet } from './components/layout/ModalSheet.jsx'
 import { GlobalSearchPanel } from './components/search/GlobalSearchPanel.jsx'
 import { fetchPublicShare } from './lib/api.js'
-import { APP_NAME, NAV_ITEMS } from './lib/constants.js'
+import { NAV_ITEMS } from './lib/constants.js'
 import { useAppState } from './hooks/useAppState.js'
 import { HomeScreen } from './screens/HomeScreen.jsx'
 import { ListsScreen } from './screens/ListsScreen.jsx'
@@ -65,10 +65,11 @@ function App() {
   const [sharePayload, setSharePayload] = useState(null)
   const [shareError, setShareError] = useState('')
   const [isShareLoading, setIsShareLoading] = useState(false)
-  const { dataSource, isLoading, loadError, toast, clearToast } = useAppState()
+  const { isLoading, loadError, toast, clearToast } = useAppState()
 
   const activeNavItem =
     NAV_ITEMS.find((item) => item.id === activeScreen) ?? NAV_ITEMS[0]
+  const showTopbar = true
 
   function handleScreenChange(nextScreen) {
     setActiveScreen(nextScreen)
@@ -231,32 +232,30 @@ function App() {
 
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <div>
-          <p className="eyebrow">PWA gastronómica</p>
-          <h1>{APP_NAME}</h1>
-        </div>
-        {!shareToken ? (
-          <button
-            className="icon-button"
-            type="button"
-            aria-label="Buscar"
-            onClick={() => setIsSearchOpen(true)}
-          >
-            🔎
-          </button>
-        ) : null}
-      </header>
+      {showTopbar ? (
+        <header className="topbar">
+          <div>
+            <h1>GastroRank</h1>
+          </div>
+          {!shareToken ? (
+            <button
+              className="icon-button"
+              type="button"
+              aria-label="Buscar"
+              onClick={() => setIsSearchOpen(true)}
+            >
+              🔎
+            </button>
+          ) : null}
+        </header>
+      ) : null}
 
       <main className="screen-container">
         {loadError ? (
-          <StatusBanner tone="error" title="Carga parcial" detail={loadError} />
-        ) : null}
-        {dataSource === 'api' ? (
           <StatusBanner
-            tone="success"
-            title="Datos sincronizados"
-            detail="La app está leyendo datos reales desde la API SQLite local."
+            tone="error"
+            title="Sin conexión"
+            detail={`No se pudieron actualizar todos los datos. ${loadError}`}
           />
         ) : null}
         {shareError ? (
