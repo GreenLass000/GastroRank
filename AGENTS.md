@@ -27,13 +27,18 @@ Current next-step assumption:
 - if the environment has Node, run verification (`db:verify`, `lint`, `build`)
 - otherwise limit the session to targeted fixes or visual corrections only
 - do not reopen broad home milestones unless the task is a targeted fix or visual correction
+- Comunidad + Perfil:
+  - `Fase 5`: closed in code
+  - `Fase 6`: closed in code
+  - next natural block: `Fase 7` (navegación y cierre de migración de `Listas`)
 
 Current files that matter most for the next block:
 - `docs/CHECKPOINT.md`
 - `docs/CHECKLIST_TECNICO.md`
-- `src/screens/HomeScreen.jsx`
-- `src/screens/MapScreen.jsx`
-- `src/components/details/EntityDetailSheet.jsx`
+- `src/screens/ProfileScreen.jsx`
+- `src/screens/ComunidadScreen.jsx`
+- `src/App.jsx`
+- `src/lib/constants.js`
 - `src/App.css`
 
 ## Current Map Stack

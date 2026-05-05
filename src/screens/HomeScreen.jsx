@@ -125,7 +125,7 @@ export function HomeScreen({ onNavigate, onOpenEntity, onOpenSearch }) {
       <SectionHeader
         title="Últimos platos añadidos"
         actionLabel="Ver todo"
-        onAction={() => onNavigate?.('lists')}
+        onAction={() => onNavigate?.('community')}
       />
       <div className="horizontal-scroll">
         {latestEntries.map((dish) => (

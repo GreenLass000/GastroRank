@@ -14,7 +14,7 @@ import { fetchPublicShare } from './lib/api.js'
 import { NAV_ITEMS } from './lib/constants.js'
 import { useAppState } from './hooks/useAppState.js'
 import { HomeScreen } from './screens/HomeScreen.jsx'
-import { ListsScreen } from './screens/ListsScreen.jsx'
+import { ComunidadScreen } from './screens/ComunidadScreen.jsx'
 import { MapScreen } from './screens/MapScreen.jsx'
 import { ProfileScreen } from './screens/ProfileScreen.jsx'
 import { RankingsScreen } from './screens/RankingsScreen.jsx'
@@ -24,7 +24,7 @@ const SCREEN_COMPONENTS = {
   home: HomeScreen,
   rankings: RankingsScreen,
   map: MapScreen,
-  lists: ListsScreen,
+  community: ComunidadScreen,
   profile: ProfileScreen,
   report: ReportScreen,
 }

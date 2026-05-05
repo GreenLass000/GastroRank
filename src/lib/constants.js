@@ -1,8 +1,10 @@
 export const APP_NAME = 'Ranking Gastronómico'
 export const STORAGE_KEYS = {
   filters: 'ranking-gastronomico:filters:v1',
-  defaultPinStyle: 'ranking-gastronomico:pin-style:v1',
+  defaultPinStyle: 'ranking-gastronomico:pin-style:v2',
   restaurantPinStyleOverrides: 'ranking-gastronomico:pin-style-overrides:v1',
+  rankingsRecentDishTypes: 'ranking-gastronomico:rankings-recent-dish-types:v1',
+  mapOnboardingSeen: 'ranking-gastronomico:map-onboarding-seen:v1',
 }
 
 export const BRAND_COLORS = {
@@ -17,7 +19,7 @@ export const NAV_ITEMS = [
   { id: 'home', icon: '🏠', label: 'Inicio' },
   { id: 'rankings', icon: '🏆', label: 'Rankings' },
   { id: 'map', icon: '🗺️', label: 'Mapa' },
-  { id: 'lists', icon: '📋', label: 'Listas' },
+  { id: 'community', icon: '👥', label: 'Comunidad' },
   { id: 'profile', icon: '👤', label: 'Perfil' },
 ]
 
@@ -34,6 +36,18 @@ export const RANKING_TYPES = [
   'Por restaurante',
 ]
 
+export const RANKING_MODES = [
+  { id: 'category', label: 'Por categoría' },
+  { id: 'dishType', label: 'Por tipo de plato' },
+  { id: 'global', label: 'Global' },
+]
+
+export const GLOBAL_RANKING_VIEWS = [
+  { id: 'dish', label: 'Por plato' },
+  { id: 'category', label: 'Por categoría' },
+  { id: 'restaurant', label: 'Por restaurante' },
+]
+
 export const CATEGORY_PREVIEW = [
   { id: 'croquetas', icon: '🥟', label: 'Croquetas' },
   { id: 'tortilla', icon: '🍳', label: 'Tortilla' },
@@ -42,9 +56,10 @@ export const CATEGORY_PREVIEW = [
 ]
 
 export const PIN_STYLES = [
-  'Punto',
+  'Nombre',
   'Categoría',
-  'Foto',
   'Precio',
-  'Score',
+  'Puntuación',
 ]
+
+export const DEFAULT_PIN_STYLE = 'Puntuación'

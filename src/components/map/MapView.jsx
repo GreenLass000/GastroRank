@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
+import { formatScore } from '../../lib/format.js'
 import { getMapsProvider, hasValidCoordinates } from '../../lib/maps.js'
+import { getScoreTone } from '../../lib/scoring.js'
 
 const LONG_PRESS_MS = 500
 const MOVE_CANCEL_PX = 10
@@ -16,9 +18,17 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;')
 }
 
+function normalizePinStyle(pinStyle) {
+  if (pinStyle === 'Score') {
+    return 'Puntuación'
+  }
+
+  return pinStyle || 'Puntuación'
+}
+
 function getToneClass(score) {
-  if (typeof score !== 'number') {
-    return 'leaflet-pin--mid'
+  if (typeof score !== 'number' || Number.isNaN(score)) {
+    return 'leaflet-pin--neutral'
   }
 
   if (score >= 8) {
@@ -38,30 +48,29 @@ function buildLeafletPinMarkup(
   isActive,
   { isDraft = false, isFocus = false } = {},
 ) {
-  const effectivePinStyle = marker.pinStyle || pinStyle
+  const effectivePinStyle = normalizePinStyle(marker.pinStyle || pinStyle)
   let content = '<span class="leaflet-pin__dot" aria-hidden="true"></span>'
+
+  if (effectivePinStyle === 'Nombre') {
+    content = `<span class="leaflet-pin__name">${escapeHtml(marker.nombre || 'Restaurante')}</span>`
+  }
 
   if (effectivePinStyle === 'Categoría') {
     content = `<span class="leaflet-pin__emoji">${escapeHtml(marker.categoryIcon || '🍽️')}</span>`
-  }
-
-  if (effectivePinStyle === 'Foto') {
-    content = marker.cover_photo_url
-      ? `<img class="leaflet-pin__photo" src="${escapeHtml(marker.cover_photo_url)}" alt="${escapeHtml(marker.nombre)}" />`
-      : '<span class="leaflet-pin__emoji">🍽️</span>'
   }
 
   if (effectivePinStyle === 'Precio') {
     content = `<span class="leaflet-pin__text">${escapeHtml(marker.precio_rango || '€')}</span>`
   }
 
-  if (effectivePinStyle === 'Score') {
-    content = `<span class="leaflet-pin__text">${typeof marker.score === 'number' ? marker.score.toFixed(1) : '0.0'}</span>`
+  if (effectivePinStyle === 'Puntuación') {
+    content = `<span class="leaflet-pin__text">${typeof marker.score === 'number' ? formatScore(marker.score) : 'N/R'}</span>`
   }
 
   const classes = [
     'leaflet-pin',
     isFocus ? 'leaflet-pin--focus' : isDraft ? 'leaflet-pin--draft' : getToneClass(marker.score),
+    effectivePinStyle === 'Nombre' ? 'leaflet-pin--name' : '',
     isActive ? 'leaflet-pin--active' : '',
   ]
     .filter(Boolean)
@@ -156,9 +165,63 @@ function clusterMarkers(markers, map, zoom, selectedMarkerId) {
   })
 }
 
+function createPopupContent(marker, onPopupAction) {
+  const container = document.createElement('div')
+  container.className = 'map-popup'
+
+  const title = document.createElement('strong')
+  title.className = 'map-popup__title'
+  title.textContent = marker.nombre || 'Restaurante'
+  container.appendChild(title)
+
+  const metaRow = document.createElement('div')
+  metaRow.className = 'map-popup__meta'
+  const scoreBadge = document.createElement('span')
+  scoreBadge.className = `ranking-card__score ranking-card__score--${getScoreTone(
+    typeof marker.score === 'number' ? marker.score : 0,
+  )}`
+  scoreBadge.textContent =
+    typeof marker.score === 'number' ? formatScore(marker.score) : 'N/R'
+  metaRow.appendChild(scoreBadge)
+  container.appendChild(metaRow)
+
+  const action = document.createElement('button')
+  action.type = 'button'
+  action.className = 'map-popup__action'
+  action.textContent = 'Ver más →'
+  action.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    onPopupAction?.(marker.id)
+  })
+  container.appendChild(action)
+
+  return container
+}
+
+function getViewportSnapshot(map) {
+  const center = map.getCenter()
+  const bounds = map.getBounds()
+
+  return {
+    center: {
+      lat: Number(center.lat),
+      lng: Number(center.lng),
+    },
+    zoom: map.getZoom(),
+    bounds: {
+      north: Number(bounds.getNorth()),
+      south: Number(bounds.getSouth()),
+      east: Number(bounds.getEast()),
+      west: Number(bounds.getWest()),
+    },
+  }
+}
+
 export function MapView({
   allowAutoLocate = false,
   center = null,
+  children = null,
   className = '',
   emptyDescription,
   emptyTitle,
@@ -167,21 +230,30 @@ export function MapView({
   markers = [],
   mode = 'full',
   onLongPress,
+  onPopupAction,
   onSelectMarker,
+  onViewportChange,
   pinStyle = 'Punto',
+  popupMarkerId = '',
   selectedMarkerId = '',
+  showAttribution = false,
   showTopline = true,
   tempMarker = null,
+  viewportAnimation = 'set',
+  viewportKey = '',
   zoom = null,
 }) {
   const onLongPressRef = useRef(onLongPress)
+  const onPopupActionRef = useRef(onPopupAction)
   const onSelectMarkerRef = useRef(onSelectMarker)
+  const onViewportChangeRef = useRef(onViewportChange)
   const mapContainerRef = useRef(null)
   const mapRef = useRef(null)
   const tileLayerRef = useRef(null)
   const markerLayerRef = useRef(null)
   const hasInitialFitRef = useRef(false)
   const didResolveInitialCenterRef = useRef(false)
+  const latestViewportRequestRef = useRef('')
   const controlledCenter = useMemo(
     () =>
       hasValidCoordinates(center)
@@ -193,8 +265,6 @@ export function MapView({
     [center],
   )
   const controlledZoom = Number.isFinite(zoom) ? Number(zoom) : null
-  const isControlledViewport =
-    Boolean(controlledCenter) && Number.isFinite(controlledZoom)
   const initialZoom = controlledZoom ?? (mode === 'mini' ? 14 : 13)
   const [currentZoom, setCurrentZoom] = useState(initialZoom)
   const effectiveZoom = controlledZoom ?? currentZoom
@@ -222,7 +292,6 @@ export function MapView({
             score: focusMarker.score ?? null,
             precio_rango: focusMarker.precio_rango || '',
             categoryIcon: focusMarker.categoryIcon || '📍',
-            cover_photo_url: focusMarker.cover_photo_url || '',
           }
         : null,
     [focusMarker],
@@ -235,10 +304,9 @@ export function MapView({
             nombre: tempMarker.nombre || 'Ubicación seleccionada',
             lat: Number(tempMarker.lat),
             lng: Number(tempMarker.lng),
-            score: tempMarker.score ?? 0,
+            score: tempMarker.score ?? null,
             precio_rango: tempMarker.precio_rango || '€',
             categoryIcon: tempMarker.categoryIcon || '📍',
-            cover_photo_url: tempMarker.cover_photo_url || '',
           }
         : null,
     [tempMarker],
@@ -249,8 +317,16 @@ export function MapView({
   }, [onLongPress])
 
   useEffect(() => {
+    onPopupActionRef.current = onPopupAction
+  }, [onPopupAction])
+
+  useEffect(() => {
     onSelectMarkerRef.current = onSelectMarker
   }, [onSelectMarker])
+
+  useEffect(() => {
+    onViewportChangeRef.current = onViewportChange
+  }, [onViewportChange])
 
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) {
@@ -259,11 +335,11 @@ export function MapView({
 
     const map = L.map(mapContainerRef.current, {
       attributionControl: false,
-      doubleClickZoom: !isControlledViewport,
-      keyboard: mode === 'full' && !isControlledViewport,
-      scrollWheelZoom: mode === 'full' && !isControlledViewport,
-      touchZoom: !isControlledViewport,
-      zoomControl: mode === 'full' && !isControlledViewport,
+      doubleClickZoom: mode === 'full',
+      keyboard: mode === 'full',
+      scrollWheelZoom: mode === 'full',
+      touchZoom: mode === 'full',
+      zoomControl: mode === 'full',
     })
 
     mapRef.current = map
@@ -281,6 +357,10 @@ export function MapView({
         : VALLADOLID_CENTER,
       initialZoom,
     )
+
+    const emitViewportChange = () => {
+      onViewportChangeRef.current?.(getViewportSnapshot(map))
+    }
 
     const clearLongPress = () => {
       if (pressStateRef.current.timerId) {
@@ -357,12 +437,15 @@ export function MapView({
     map.on('dragstart', cancelLongPress)
     map.on('movestart', cancelLongPress)
     map.on('zoomstart', cancelLongPress)
+    map.on('moveend', emitViewportChange)
     map.on('zoomend', () => {
       setCurrentZoom(map.getZoom())
+      emitViewportChange()
     })
 
     window.setTimeout(() => {
       map.invalidateSize()
+      emitViewportChange()
     }, 0)
 
     return () => {
@@ -379,8 +462,9 @@ export function MapView({
       markerLayerRef.current = null
       hasInitialFitRef.current = false
       didResolveInitialCenterRef.current = false
+      latestViewportRequestRef.current = ''
     }
-  }, [controlledCenter, initialZoom, isControlledViewport, mode])
+  }, [controlledCenter, initialZoom, mode])
 
   useEffect(() => {
     const map = mapRef.current
@@ -390,7 +474,7 @@ export function MapView({
       mode !== 'full' ||
       !allowAutoLocate ||
       didResolveInitialCenterRef.current ||
-      isControlledViewport
+      controlledCenter
     ) {
       return
     }
@@ -404,10 +488,7 @@ export function MapView({
 
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        map.setView(
-          [position.coords.latitude, position.coords.longitude],
-          14,
-        )
+        map.setView([position.coords.latitude, position.coords.longitude], 14)
       },
       () => {
         map.setView(VALLADOLID_CENTER, 13)
@@ -417,7 +498,7 @@ export function MapView({
         timeout: 5000,
       },
     )
-  }, [allowAutoLocate, isControlledViewport, mode])
+  }, [allowAutoLocate, controlledCenter, mode])
 
   useEffect(() => {
     const map = mapRef.current
@@ -426,14 +507,32 @@ export function MapView({
       return
     }
 
-    map.setView(
-      [controlledCenter.lat, controlledCenter.lng],
-      controlledZoom ?? map.getZoom(),
-      {
-        animate: false,
-      },
-    )
-  }, [controlledCenter, controlledZoom])
+    const requestKey = [
+      controlledCenter.lat.toFixed(6),
+      controlledCenter.lng.toFixed(6),
+      controlledZoom ?? '',
+      viewportAnimation,
+      viewportKey,
+    ].join(':')
+
+    if (latestViewportRequestRef.current === requestKey) {
+      return
+    }
+
+    latestViewportRequestRef.current = requestKey
+    const targetZoom = controlledZoom ?? map.getZoom()
+
+    if (viewportAnimation === 'fly') {
+      map.flyTo([controlledCenter.lat, controlledCenter.lng], targetZoom, {
+        duration: 0.45,
+      })
+      return
+    }
+
+    map.setView([controlledCenter.lat, controlledCenter.lng], targetZoom, {
+      animate: false,
+    })
+  }, [controlledCenter, controlledZoom, viewportAnimation, viewportKey])
 
   useEffect(() => {
     const map = mapRef.current
@@ -457,6 +556,7 @@ export function MapView({
 
     markerLayer.clearLayers()
 
+    const popupTargetId = popupMarkerId || selectedMarkerId
     const renderItems =
       mode === 'full'
         ? clusterMarkers(validMarkers, map, effectiveZoom, selectedMarkerId)
@@ -479,25 +579,19 @@ export function MapView({
           riseOnHover: true,
         })
 
-        if (!isControlledViewport) {
-          clusterMarker.on('click', () => {
-            map.fitBounds(item.bounds, {
-              maxZoom: Math.min(map.getZoom() + 2, 18),
-              padding: [32, 32],
-            })
+        clusterMarker.on('click', () => {
+          map.fitBounds(item.bounds, {
+            maxZoom: Math.min(map.getZoom() + 2, 18),
+            padding: [32, 32],
           })
-        }
+        })
         clusterMarker.addTo(markerLayer)
         return
       }
 
       const icon = L.divIcon({
         className: 'leaflet-pin-icon',
-        html: buildLeafletPinMarkup(
-          item.marker,
-          pinStyle,
-          item.isActive,
-        ),
+        html: buildLeafletPinMarkup(item.marker, pinStyle, item.isActive),
         iconAnchor: [18, 18],
         iconSize: [36, 36],
       })
@@ -511,7 +605,26 @@ export function MapView({
       )
 
       markerInstance.on('click', () => onSelectMarkerRef.current?.(item.marker.id))
+
+      if (item.marker.id === popupTargetId) {
+        markerInstance.bindPopup(
+          createPopupContent(item.marker, (markerId) =>
+            onPopupActionRef.current?.(markerId),
+          ),
+          {
+            autoPan: true,
+            closeButton: false,
+            className: 'leaflet-restaurant-popup',
+            offset: [0, -18],
+          },
+        )
+      }
+
       markerInstance.addTo(markerLayer)
+
+      if (item.marker.id === popupTargetId) {
+        markerInstance.openPopup()
+      }
     })
 
     if (effectiveFocusMarker) {
@@ -545,9 +658,9 @@ export function MapView({
     draftMarker,
     effectiveZoom,
     effectiveFocusMarker,
-    isControlledViewport,
     mode,
     pinStyle,
+    popupMarkerId,
     selectedMarkerId,
     validMarkers,
   ])
@@ -567,7 +680,7 @@ export function MapView({
       ...(draftMarker ? [[Number(draftMarker.lat), Number(draftMarker.lng)]] : []),
     ]
 
-    if (isControlledViewport) {
+    if (controlledCenter) {
       return
     }
 
@@ -582,11 +695,11 @@ export function MapView({
       if (draftMarker) {
         map.setView([Number(draftMarker.lat), Number(draftMarker.lng)], 15)
       } else if (points.length === 1) {
-        map.setView(points[0], mode === 'mini' ? 15 : 14)
+        map.setView(points[0], 15)
       } else {
         map.fitBounds(points, {
-          maxZoom: mode === 'mini' ? 15 : 16,
-          padding: mode === 'mini' ? [18, 18] : [36, 36],
+          maxZoom: 15,
+          padding: [18, 18],
         })
       }
 
@@ -606,29 +719,25 @@ export function MapView({
         map.panTo([Number(selectedMarker.lat), Number(selectedMarker.lng)])
       }
     }
-  }, [
-    draftMarker,
-    effectiveFocusMarker,
-    isControlledViewport,
-    mode,
-    selectedMarkerId,
-    validMarkers,
-  ])
+  }, [controlledCenter, draftMarker, effectiveFocusMarker, mode, selectedMarkerId, validMarkers])
 
   return (
     <div className={`map-view map-view--${mode}${className ? ` ${className}` : ''}`}>
       {showTopline ? (
         <div className="map-view__topline">
-          <span className="map-provider-badge">
-            {provider === 'leaflet-osm' ? 'Leaflet + OpenStreetMap' : 'Mapa'}
-          </span>
-          <span>{instructionLabel}</span>
+          <span>{instructionLabel || (provider === 'leaflet-osm' ? 'Mapa' : 'Mapa')}</span>
         </div>
       ) : null}
 
-      <div className="map-view__surface map-view__surface--leaflet" role="application" aria-label="Mapa interactivo de restaurantes">
+      <div
+        className="map-view__surface map-view__surface--leaflet"
+        role="application"
+        aria-label="Mapa interactivo de restaurantes"
+      >
         <div className="map-view__leaflet" ref={mapContainerRef} />
-        <div className="map-view__attribution">Datos © OpenStreetMap</div>
+        {showAttribution ? (
+          <div className="map-view__attribution">Datos © OpenStreetMap</div>
+        ) : null}
         {validMarkers.length === 0 && !draftMarker ? (
           <div className="map-view__empty">
             <strong>{emptyTitle || 'Sin puntos todavía'}</strong>
@@ -638,6 +747,7 @@ export function MapView({
             </p>
           </div>
         ) : null}
+        {children}
       </div>
     </div>
   )

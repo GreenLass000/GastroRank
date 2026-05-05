@@ -31,13 +31,21 @@ const ROUTE_QUERIES = {
   dishTypes: 'SELECT * FROM dish_types ORDER BY nombre ASC;',
   dishEntries: 'SELECT * FROM dish_entries ORDER BY created_at ASC;',
   publicShareTokens: 'SELECT * FROM public_share_tokens ORDER BY created_at ASC;',
+  follows: 'SELECT * FROM follows ORDER BY created_at DESC;',
+  reactions: 'SELECT * FROM reactions ORDER BY created_at DESC;',
+  comments: 'SELECT * FROM comments ORDER BY created_at ASC;',
+  inspirationLists: 'SELECT * FROM inspiration_lists ORDER BY created_at ASC;',
+  inspirationListItems:
+    'SELECT * FROM inspiration_list_items ORDER BY saved_at DESC;',
+  recommendations: 'SELECT * FROM recommendations ORDER BY created_at DESC;',
+  achievements: 'SELECT * FROM achievements ORDER BY unlocked_at DESC;',
 }
 
 function sendJson(response, statusCode, payload) {
   response.writeHead(statusCode, {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Content-Type': 'application/json; charset=utf-8',
   })
   response.end(JSON.stringify(payload))
@@ -178,6 +186,230 @@ function sqlValue(value) {
 
 function numericSqlValue(value) {
   return value === null || value === undefined ? 'NULL' : String(value)
+}
+
+function parseInteger(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ''), 10)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function toBooleanFlag(value, fallback = 0) {
+  if (typeof value === 'boolean') {
+    return value ? 1 : 0
+  }
+
+  if (value === 1 || value === '1' || value === 'true') {
+    return 1
+  }
+
+  if (value === 0 || value === '0' || value === 'false') {
+    return 0
+  }
+
+  return fallback
+}
+
+function getRequiredString(value, label) {
+  const normalized = typeof value === 'string' ? value.trim() : ''
+
+  if (!normalized) {
+    throw new Error(`Falta ${label}.`)
+  }
+
+  return normalized
+}
+
+function getOptionalString(value) {
+  if (typeof value !== 'string') {
+    return null
+  }
+
+  const normalized = value.trim()
+  return normalized || null
+}
+
+function getCurrentUserIdFromSearchParams(searchParams) {
+  const userId =
+    searchParams.get('user_id') ??
+    searchParams.get('current_user_id') ??
+    searchParams.get('viewer_user_id')
+
+  return getRequiredString(userId, 'el user_id actual')
+}
+
+function normalizeReactionType(value) {
+  const reactionType = getRequiredString(value, 'el tipo de reacción')
+  const allowedTypes = [
+    'quiero_probar',
+    'ya_probe',
+    'que_hambre',
+    'mejorable',
+    'paso',
+  ]
+
+  if (!allowedTypes.includes(reactionType)) {
+    throw new Error('El tipo de reacción no es válido.')
+  }
+
+  return reactionType
+}
+
+function sanitizeMentions(rawMentions) {
+  if (rawMentions === null || rawMentions === undefined) {
+    return []
+  }
+
+  if (!Array.isArray(rawMentions)) {
+    throw new Error('Las menciones deben ser un array JSON.')
+  }
+
+  if (rawMentions.length > 20) {
+    throw new Error('No se permiten más de 20 menciones por comentario.')
+  }
+
+  return rawMentions.map((mention, index) => {
+    if (!mention || typeof mention !== 'object') {
+      throw new Error(`La mención ${index + 1} no es válida.`)
+    }
+
+    const type = getRequiredString(mention.type, `el tipo de la mención ${index + 1}`)
+    const value = getRequiredString(mention.value, `el valor de la mención ${index + 1}`)
+    const allowedTypes = ['user', 'restaurant', 'dish']
+
+    if (!allowedTypes.includes(type)) {
+      throw new Error(`La mención ${index + 1} tiene un tipo no soportado.`)
+    }
+
+    if (value.length > 120) {
+      throw new Error(`La mención ${index + 1} es demasiado larga.`)
+    }
+
+    const label = getOptionalString(mention.label)
+
+    return {
+      type,
+      value,
+      ...(label ? { label: label.slice(0, 120) } : {}),
+    }
+  })
+}
+
+function parseFilters(searchParams) {
+  const filtersFromJson = parseJsonValue(searchParams.get('filters'), {})
+  const categoryIds =
+    filtersFromJson.categoryIds ??
+    filtersFromJson.categoriaIds ??
+    parseJsonValue(searchParams.get('category_ids'), [])
+  const dishTypeIds =
+    filtersFromJson.dishTypeIds ??
+    filtersFromJson.tipoPlatoIds ??
+    parseJsonValue(searchParams.get('dish_type_ids'), [])
+  const priceRange =
+    filtersFromJson.priceRange ??
+    filtersFromJson.precioRango ??
+    searchParams.get('price_range') ??
+    searchParams.get('precio_rango')
+  const minScore =
+    filtersFromJson.minScore ??
+    filtersFromJson.puntuacionMinima ??
+    searchParams.get('min_score') ??
+    searchParams.get('puntuacion_minima')
+  const dateFrom =
+    filtersFromJson.dateFrom ??
+    filtersFromJson.fechaDesde ??
+    searchParams.get('date_from') ??
+    searchParams.get('fecha_desde')
+  const dateTo =
+    filtersFromJson.dateTo ??
+    filtersFromJson.fechaHasta ??
+    searchParams.get('date_to') ??
+    searchParams.get('fecha_hasta')
+
+  return {
+    categoryIds: Array.isArray(categoryIds) ? categoryIds.filter(Boolean) : [],
+    dishTypeIds: Array.isArray(dishTypeIds) ? dishTypeIds.filter(Boolean) : [],
+    priceRange:
+      Array.isArray(priceRange) && priceRange.length > 0
+        ? priceRange
+        : typeof priceRange === 'string' && priceRange.trim()
+          ? [priceRange.trim()]
+          : [],
+    minScore:
+      minScore === null || minScore === undefined || minScore === ''
+        ? null
+        : Number(minScore),
+    dateFrom: typeof dateFrom === 'string' && dateFrom.trim() ? dateFrom.trim() : null,
+    dateTo: typeof dateTo === 'string' && dateTo.trim() ? dateTo.trim() : null,
+  }
+}
+
+function getWeekStart(dateInput) {
+  const date = new Date(dateInput)
+  const normalized = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
+  const day = normalized.getUTCDay() || 7
+  normalized.setUTCDate(normalized.getUTCDate() - day + 1)
+  normalized.setUTCHours(0, 0, 0, 0)
+  return normalized
+}
+
+function calculateWeeklyStreak(dishEntries, userId) {
+  const userEntries = dishEntries.filter((entry) => entry.created_by_user_id === userId)
+
+  if (userEntries.length === 0) {
+    return 0
+  }
+
+  const entryWeeks = new Set(
+    userEntries.map((entry) => getWeekStart(entry.created_at ?? entry.fecha).toISOString()),
+  )
+  let streak = 0
+  const cursor = getWeekStart(new Date().toISOString())
+
+  while (entryWeeks.has(cursor.toISOString())) {
+    streak += 1
+    cursor.setUTCDate(cursor.getUTCDate() - 7)
+  }
+
+  return streak
+}
+
+function buildUserLookup(users) {
+  return new Map(users.map((user) => [user.id, user]))
+}
+
+function buildReactionSummary(reactions) {
+  const summary = new Map()
+
+  reactions.forEach((reaction) => {
+    const currentCount = summary.get(reaction.reaction_type) ?? 0
+    summary.set(reaction.reaction_type, currentCount + 1)
+  })
+
+  return Array.from(summary.entries())
+    .map(([reactionType, count]) => ({ reaction_type: reactionType, count }))
+    .sort((left, right) => right.count - left.count || left.reaction_type.localeCompare(right.reaction_type))
+}
+
+function buildCommunityEntry(entry, context) {
+  const restaurant = context.restaurantsById.get(entry.restaurant_id) ?? null
+  const author = context.usersById.get(entry.created_by_user_id) ?? null
+  const category = context.categoriesById.get(entry.categoria_id) ?? null
+  const dishType = context.dishTypesById.get(entry.tipo_plato_id) ?? null
+  const entryReactions = context.reactionsByEntryId.get(entry.id) ?? []
+  const entryComments = context.commentsByEntryId.get(entry.id) ?? []
+
+  return {
+    ...entry,
+    restaurant,
+    author,
+    category,
+    dishType,
+    reactions_summary: buildReactionSummary(entryReactions),
+    reactions_total: entryReactions.length,
+    comments_count: entryComments.length,
+    user_reaction:
+      entryReactions.find((reaction) => reaction.user_id === context.currentUserId) ?? null,
+  }
 }
 
 function ensureRecordExists(rows, id, label) {
@@ -721,6 +953,735 @@ async function updateDishEntry(dishEntryId, payload) {
   }
 }
 
+async function getFollowState(userId) {
+  const [users, follows] = await Promise.all([
+    runJsonQuery(ROUTE_QUERIES.users),
+    runJsonQuery(ROUTE_QUERIES.follows),
+  ])
+
+  ensureRecordExists(users, userId, 'el usuario solicitado')
+  const usersById = buildUserLookup(users)
+  const following = follows.filter((follow) => follow.follower_user_id === userId)
+  const followers = follows.filter((follow) => follow.followed_user_id === userId)
+  const followingIds = new Set(following.map((follow) => follow.followed_user_id))
+  const followerIds = new Set(followers.map((follow) => follow.follower_user_id))
+  const mutualIds = Array.from(followingIds).filter((followedUserId) => followerIds.has(followedUserId))
+
+  return {
+    follows: follows.filter(
+      (follow) =>
+        follow.follower_user_id === userId || follow.followed_user_id === userId,
+    ),
+    following: following.map((follow) => ({
+      ...follow,
+      user: usersById.get(follow.followed_user_id) ?? null,
+      id: follow.followed_user_id,
+    })),
+    followers: followers.map((follow) => ({
+      ...follow,
+      user: usersById.get(follow.follower_user_id) ?? null,
+      id: follow.follower_user_id,
+    })),
+    mutuals: mutualIds.map((mutualUserId) => usersById.get(mutualUserId)).filter(Boolean),
+  }
+}
+
+async function createFollow(payload) {
+  const followerUserId = getRequiredString(
+    payload.follower_user_id ?? payload.current_user_id ?? payload.user_id,
+    'el follower_user_id',
+  )
+  const followedUserId = getRequiredString(
+    payload.followed_user_id,
+    'el followed_user_id',
+  )
+
+  if (followerUserId === followedUserId) {
+    throw new Error('No puedes seguirte a ti mismo.')
+  }
+
+  const [users, follows] = await Promise.all([
+    runJsonQuery(ROUTE_QUERIES.users),
+    runJsonQuery(ROUTE_QUERIES.follows),
+  ])
+
+  ensureRecordExists(users, followerUserId, 'el usuario seguidor')
+  ensureRecordExists(users, followedUserId, 'el usuario a seguir')
+
+  const existingFollow = follows.find(
+    (follow) =>
+      follow.follower_user_id === followerUserId &&
+      follow.followed_user_id === followedUserId,
+  )
+
+  if (existingFollow) {
+    return existingFollow
+  }
+
+  const record = {
+    follower_user_id: followerUserId,
+    followed_user_id: followedUserId,
+    created_at: new Date().toISOString(),
+  }
+
+  const sql = `
+    INSERT INTO follows (follower_user_id, followed_user_id, created_at)
+    VALUES (
+      ${sqlValue(record.follower_user_id)},
+      ${sqlValue(record.followed_user_id)},
+      ${sqlValue(record.created_at)}
+    );
+  `
+
+  await runWriteQuery(sql)
+  return record
+}
+
+async function deleteFollow(currentUserId, followedUserId) {
+  const follows = await runJsonQuery(ROUTE_QUERIES.follows)
+  const follow = follows.find(
+    (item) =>
+      item.follower_user_id === currentUserId &&
+      item.followed_user_id === followedUserId,
+  )
+
+  if (!follow) {
+    throw new Error('No existe ese follow.')
+  }
+
+  const sql = `
+    DELETE FROM follows
+    WHERE follower_user_id = ${sqlValue(currentUserId)}
+      AND followed_user_id = ${sqlValue(followedUserId)};
+  `
+
+  await runWriteQuery(sql)
+  return { ok: true }
+}
+
+async function getCommunityFeed(searchParams) {
+  const currentUserId = getCurrentUserIdFromSearchParams(searchParams)
+  const tab = searchParams.get('tab') === 'amigos' ? 'amigos' : 'explorar'
+  const page = Math.max(1, parseInteger(searchParams.get('page'), 1))
+  const pageSize = Math.min(30, Math.max(1, parseInteger(searchParams.get('page_size'), 10)))
+  const filters = parseFilters(searchParams)
+
+  const [
+    users,
+    restaurants,
+    categories,
+    dishTypes,
+    dishEntries,
+    follows,
+    reactions,
+    comments,
+  ] = await Promise.all([
+    runJsonQuery(ROUTE_QUERIES.users),
+    runJsonQuery(ROUTE_QUERIES.restaurants),
+    runJsonQuery(ROUTE_QUERIES.categories),
+    runJsonQuery(ROUTE_QUERIES.dishTypes),
+    runJsonQuery(ROUTE_QUERIES.dishEntries),
+    runJsonQuery(ROUTE_QUERIES.follows),
+    runJsonQuery(ROUTE_QUERIES.reactions),
+    runJsonQuery(ROUTE_QUERIES.comments),
+  ])
+
+  ensureRecordExists(users, currentUserId, 'el usuario actual')
+
+  const followingIds = new Set(
+    follows
+      .filter((follow) => follow.follower_user_id === currentUserId)
+      .map((follow) => follow.followed_user_id),
+  )
+  const followerIds = new Set(
+    follows
+      .filter((follow) => follow.followed_user_id === currentUserId)
+      .map((follow) => follow.follower_user_id),
+  )
+  const mutualFollowIds = new Set(
+    Array.from(followingIds).filter((followedUserId) => followerIds.has(followedUserId)),
+  )
+  const restaurantsById = new Map(parseRestaurantRows(restaurants).map((restaurant) => [restaurant.id, restaurant]))
+  const categoriesById = new Map(categories.map((category) => [category.id, category]))
+  const dishTypesById = new Map(dishTypes.map((dishType) => [dishType.id, dishType]))
+  const usersById = buildUserLookup(users)
+  const reactionsByEntryId = new Map()
+  const commentsByEntryId = new Map()
+
+  reactions.forEach((reaction) => {
+    const entryReactions = reactionsByEntryId.get(reaction.dish_entry_id) ?? []
+    entryReactions.push(reaction)
+    reactionsByEntryId.set(reaction.dish_entry_id, entryReactions)
+  })
+
+  comments.forEach((comment) => {
+    const entryComments = commentsByEntryId.get(comment.dish_entry_id) ?? []
+    entryComments.push({
+      ...comment,
+      mentions: parseJsonValue(comment.mentions, []),
+    })
+    commentsByEntryId.set(comment.dish_entry_id, entryComments)
+  })
+
+  let scopedEntries = dishEntries.filter((entry) => entry.created_by_user_id !== currentUserId)
+
+  if (tab === 'amigos') {
+    scopedEntries = scopedEntries.filter(
+      (entry) =>
+        mutualFollowIds.has(entry.created_by_user_id) && entry.visibility !== 'private',
+    )
+  } else {
+    scopedEntries = scopedEntries.filter((entry) => entry.visibility === 'public')
+  }
+
+  if (filters.categoryIds.length > 0) {
+    scopedEntries = scopedEntries.filter((entry) => filters.categoryIds.includes(entry.categoria_id))
+  }
+
+  if (filters.dishTypeIds.length > 0) {
+    scopedEntries = scopedEntries.filter((entry) => filters.dishTypeIds.includes(entry.tipo_plato_id))
+  }
+
+  if (filters.priceRange.length > 0) {
+    scopedEntries = scopedEntries.filter((entry) => {
+      const restaurant = restaurantsById.get(entry.restaurant_id)
+      return restaurant && filters.priceRange.includes(restaurant.precio_rango)
+    })
+  }
+
+  if (typeof filters.minScore === 'number' && !Number.isNaN(filters.minScore)) {
+    scopedEntries = scopedEntries.filter(
+      (entry) => Number(entry.puntuacion_general ?? 0) >= filters.minScore,
+    )
+  }
+
+  if (filters.dateFrom) {
+    scopedEntries = scopedEntries.filter((entry) => String(entry.fecha) >= filters.dateFrom)
+  }
+
+  if (filters.dateTo) {
+    scopedEntries = scopedEntries.filter((entry) => String(entry.fecha) <= filters.dateTo)
+  }
+
+  scopedEntries.sort((left, right) => {
+    const leftTime = new Date(left.created_at ?? left.fecha).getTime()
+    const rightTime = new Date(right.created_at ?? right.fecha).getTime()
+    return rightTime - leftTime
+  })
+
+  const totalItems = scopedEntries.length
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
+  const currentPage = Math.min(page, totalPages)
+  const offset = (currentPage - 1) * pageSize
+  const paginatedEntries = scopedEntries.slice(offset, offset + pageSize)
+  const context = {
+    currentUserId,
+    usersById,
+    restaurantsById,
+    categoriesById,
+    dishTypesById,
+    reactionsByEntryId,
+    commentsByEntryId,
+  }
+
+  return {
+    tab,
+    page: currentPage,
+    page_size: pageSize,
+    total_items: totalItems,
+    total_pages: totalPages,
+    filters,
+    entries: paginatedEntries.map((entry) => buildCommunityEntry(entry, context)),
+  }
+}
+
+async function addOrUpdateReaction(payload) {
+  const dishEntryId = getRequiredString(payload.dish_entry_id, 'el dish_entry_id')
+  const userId = getRequiredString(payload.user_id, 'el user_id')
+  const reactionType = normalizeReactionType(payload.reaction_type)
+
+  const [dishEntries, users, reactions] = await Promise.all([
+    runJsonQuery(ROUTE_QUERIES.dishEntries),
+    runJsonQuery(ROUTE_QUERIES.users),
+    runJsonQuery(ROUTE_QUERIES.reactions),
+  ])
+
+  ensureRecordExists(dishEntries, dishEntryId, 'la valoración')
+  ensureRecordExists(users, userId, 'el usuario')
+
+  const existingReaction = reactions.find(
+    (reaction) => reaction.dish_entry_id === dishEntryId && reaction.user_id === userId,
+  )
+  const createdAt = existingReaction?.created_at ?? new Date().toISOString()
+  const record = {
+    id: existingReaction?.id ?? randomUUID(),
+    dish_entry_id: dishEntryId,
+    user_id: userId,
+    reaction_type: reactionType,
+    created_at: createdAt,
+  }
+
+  const sql = existingReaction
+    ? `
+      UPDATE reactions
+      SET reaction_type = ${sqlValue(record.reaction_type)}
+      WHERE id = ${sqlValue(record.id)};
+    `
+    : `
+      INSERT INTO reactions (id, dish_entry_id, user_id, reaction_type, created_at)
+      VALUES (
+        ${sqlValue(record.id)},
+        ${sqlValue(record.dish_entry_id)},
+        ${sqlValue(record.user_id)},
+        ${sqlValue(record.reaction_type)},
+        ${sqlValue(record.created_at)}
+      );
+    `
+
+  await runWriteQuery(sql)
+  return record
+}
+
+async function deleteReaction(reactionId) {
+  const reactions = await runJsonQuery(ROUTE_QUERIES.reactions)
+  ensureRecordExists(reactions, reactionId, 'la reacción')
+
+  const sql = `
+    DELETE FROM reactions
+    WHERE id = ${sqlValue(reactionId)};
+  `
+
+  await runWriteQuery(sql)
+  return { ok: true }
+}
+
+async function getCommentsForEntry(entryId) {
+  const [comments, users, dishEntries] = await Promise.all([
+    runJsonQuery(ROUTE_QUERIES.comments),
+    runJsonQuery(ROUTE_QUERIES.users),
+    runJsonQuery(ROUTE_QUERIES.dishEntries),
+  ])
+
+  ensureRecordExists(dishEntries, entryId, 'la valoración')
+  const usersById = buildUserLookup(users)
+
+  return comments
+    .filter((comment) => comment.dish_entry_id === entryId)
+    .map((comment) => ({
+      ...comment,
+      mentions: parseJsonValue(comment.mentions, []),
+      user: usersById.get(comment.user_id) ?? null,
+    }))
+}
+
+async function createComment(payload) {
+  const dishEntryId = getRequiredString(payload.dish_entry_id, 'el dish_entry_id')
+  const userId = getRequiredString(payload.user_id, 'el user_id')
+  const text = getRequiredString(payload.text, 'el texto del comentario')
+  const mentions = sanitizeMentions(payload.mentions)
+
+  if (text.length > 500) {
+    throw new Error('El comentario no puede superar los 500 caracteres.')
+  }
+
+  const [dishEntries, users] = await Promise.all([
+    runJsonQuery(ROUTE_QUERIES.dishEntries),
+    runJsonQuery(ROUTE_QUERIES.users),
+  ])
+
+  ensureRecordExists(dishEntries, dishEntryId, 'la valoración')
+  ensureRecordExists(users, userId, 'el usuario')
+
+  const record = {
+    id: randomUUID(),
+    dish_entry_id: dishEntryId,
+    user_id: userId,
+    text,
+    mentions,
+    created_at: new Date().toISOString(),
+  }
+
+  const sql = `
+    INSERT INTO comments (id, dish_entry_id, user_id, text, mentions, created_at)
+    VALUES (
+      ${sqlValue(record.id)},
+      ${sqlValue(record.dish_entry_id)},
+      ${sqlValue(record.user_id)},
+      ${sqlValue(record.text)},
+      ${sqlValue(JSON.stringify(record.mentions))},
+      ${sqlValue(record.created_at)}
+    );
+  `
+
+  await runWriteQuery(sql)
+  return {
+    ...record,
+    user: ensureRecordExists(users, userId, 'el usuario del comentario'),
+  }
+}
+
+async function getInspirationLists(userId) {
+  const [users, lists, items, dishEntries] = await Promise.all([
+    runJsonQuery(ROUTE_QUERIES.users),
+    runJsonQuery(ROUTE_QUERIES.inspirationLists),
+    runJsonQuery(ROUTE_QUERIES.inspirationListItems),
+    runJsonQuery(ROUTE_QUERIES.dishEntries),
+  ])
+
+  ensureRecordExists(users, userId, 'el usuario solicitado')
+  const entriesById = new Map(dishEntries.map((entry) => [entry.id, entry]))
+
+  return lists
+    .filter((list) => list.user_id === userId)
+    .map((list) => {
+      const listItems = items
+        .filter((item) => item.list_id === list.id)
+        .map((item) => ({
+          ...item,
+          tried: Boolean(item.tried),
+          dish_entry: entriesById.get(item.dish_entry_id) ?? null,
+        }))
+
+      return {
+        ...list,
+        is_default: Boolean(list.is_default),
+        items: listItems,
+        items_count: listItems.length,
+      }
+    })
+}
+
+async function createInspirationList(payload) {
+  const userId = getRequiredString(payload.user_id, 'el user_id')
+  const name = getRequiredString(payload.name, 'el nombre de la lista')
+  const isDefault = toBooleanFlag(payload.is_default, 0)
+
+  const [users, lists] = await Promise.all([
+    runJsonQuery(ROUTE_QUERIES.users),
+    runJsonQuery(ROUTE_QUERIES.inspirationLists),
+  ])
+
+  ensureRecordExists(users, userId, 'el usuario')
+
+  if (
+    lists.some(
+      (list) =>
+        list.user_id === userId &&
+        list.name.trim().toLowerCase() === name.trim().toLowerCase(),
+    )
+  ) {
+    throw new Error('Ya existe una lista con ese nombre para este usuario.')
+  }
+
+  const record = {
+    id: randomUUID(),
+    user_id: userId,
+    name,
+    is_default: isDefault,
+    created_at: new Date().toISOString(),
+  }
+
+  const sql = `
+    INSERT INTO inspiration_lists (id, user_id, name, is_default, created_at)
+    VALUES (
+      ${sqlValue(record.id)},
+      ${sqlValue(record.user_id)},
+      ${sqlValue(record.name)},
+      ${numericSqlValue(record.is_default)},
+      ${sqlValue(record.created_at)}
+    );
+  `
+
+  await runWriteQuery(sql)
+  return {
+    ...record,
+    is_default: Boolean(record.is_default),
+  }
+}
+
+async function createInspirationListItem(payload) {
+  const listId = getRequiredString(payload.list_id, 'el list_id')
+  const dishEntryId = getRequiredString(payload.dish_entry_id, 'el dish_entry_id')
+  const tried = toBooleanFlag(payload.tried, 0)
+  const now = new Date().toISOString()
+
+  const [lists, dishEntries, items] = await Promise.all([
+    runJsonQuery(ROUTE_QUERIES.inspirationLists),
+    runJsonQuery(ROUTE_QUERIES.dishEntries),
+    runJsonQuery(ROUTE_QUERIES.inspirationListItems),
+  ])
+
+  ensureRecordExists(lists, listId, 'la lista')
+  ensureRecordExists(dishEntries, dishEntryId, 'la valoración')
+
+  const existingItem = items.find(
+    (item) => item.list_id === listId && item.dish_entry_id === dishEntryId,
+  )
+
+  if (existingItem) {
+    return {
+      ...existingItem,
+      tried: Boolean(existingItem.tried),
+    }
+  }
+
+  const record = {
+    id: randomUUID(),
+    list_id: listId,
+    dish_entry_id: dishEntryId,
+    tried,
+    tried_at: tried ? now : null,
+    saved_at: now,
+  }
+
+  const sql = `
+    INSERT INTO inspiration_list_items (
+      id,
+      list_id,
+      dish_entry_id,
+      tried,
+      tried_at,
+      saved_at
+    ) VALUES (
+      ${sqlValue(record.id)},
+      ${sqlValue(record.list_id)},
+      ${sqlValue(record.dish_entry_id)},
+      ${numericSqlValue(record.tried)},
+      ${sqlValue(record.tried_at)},
+      ${sqlValue(record.saved_at)}
+    );
+  `
+
+  await runWriteQuery(sql)
+  return {
+    ...record,
+    tried: Boolean(record.tried),
+  }
+}
+
+async function updateInspirationListItem(itemId, payload) {
+  const items = await runJsonQuery(ROUTE_QUERIES.inspirationListItems)
+  const currentItem = ensureRecordExists(items, itemId, 'el elemento de lista')
+
+  if (toBooleanFlag(payload.remove, 0) === 1) {
+    const sql = `
+      DELETE FROM inspiration_list_items
+      WHERE id = ${sqlValue(itemId)};
+    `
+
+    await runWriteQuery(sql)
+    return { removed: true, id: itemId }
+  }
+
+  const tried = toBooleanFlag(payload.tried, currentItem.tried)
+  const triedAt =
+    tried === 1
+      ? currentItem.tried_at ?? new Date().toISOString()
+      : null
+
+  const sql = `
+    UPDATE inspiration_list_items
+    SET
+      tried = ${numericSqlValue(tried)},
+      tried_at = ${sqlValue(triedAt)}
+    WHERE id = ${sqlValue(itemId)};
+  `
+
+  await runWriteQuery(sql)
+  return {
+    ...currentItem,
+    tried: Boolean(tried),
+    tried_at: triedAt,
+  }
+}
+
+async function createRecommendation(payload) {
+  const fromUserId = getRequiredString(payload.from_user_id, 'el from_user_id')
+  const toUserId = getRequiredString(payload.to_user_id, 'el to_user_id')
+  const dishEntryId = getRequiredString(payload.dish_entry_id, 'el dish_entry_id')
+
+  if (fromUserId === toUserId) {
+    throw new Error('No puedes recomendarte a ti mismo.')
+  }
+
+  const [users, dishEntries] = await Promise.all([
+    runJsonQuery(ROUTE_QUERIES.users),
+    runJsonQuery(ROUTE_QUERIES.dishEntries),
+  ])
+
+  ensureRecordExists(users, fromUserId, 'el usuario origen')
+  ensureRecordExists(users, toUserId, 'el usuario destino')
+  ensureRecordExists(dishEntries, dishEntryId, 'la valoración recomendada')
+
+  const record = {
+    id: randomUUID(),
+    from_user_id: fromUserId,
+    to_user_id: toUserId,
+    dish_entry_id: dishEntryId,
+    seen: 0,
+    created_at: new Date().toISOString(),
+  }
+
+  const sql = `
+    INSERT INTO recommendations (
+      id,
+      from_user_id,
+      to_user_id,
+      dish_entry_id,
+      seen,
+      created_at
+    ) VALUES (
+      ${sqlValue(record.id)},
+      ${sqlValue(record.from_user_id)},
+      ${sqlValue(record.to_user_id)},
+      ${sqlValue(record.dish_entry_id)},
+      ${numericSqlValue(record.seen)},
+      ${sqlValue(record.created_at)}
+    );
+  `
+
+  await runWriteQuery(sql)
+  return {
+    ...record,
+    seen: false,
+  }
+}
+
+async function markRecommendationSeen(recommendationId) {
+  const recommendations = await runJsonQuery(ROUTE_QUERIES.recommendations)
+  const currentRecommendation = ensureRecordExists(
+    recommendations,
+    recommendationId,
+    'la recomendación',
+  )
+
+  const sql = `
+    UPDATE recommendations
+    SET seen = 1
+    WHERE id = ${sqlValue(recommendationId)};
+  `
+
+  await runWriteQuery(sql)
+  return {
+    ...currentRecommendation,
+    seen: true,
+  }
+}
+
+async function getRecommendations(userId) {
+  const [users, recommendations, dishEntries] = await Promise.all([
+    runJsonQuery(ROUTE_QUERIES.users),
+    runJsonQuery(ROUTE_QUERIES.recommendations),
+    runJsonQuery(ROUTE_QUERIES.dishEntries),
+  ])
+
+  ensureRecordExists(users, userId, 'el usuario solicitado')
+  const usersById = buildUserLookup(users)
+  const entriesById = new Map(dishEntries.map((entry) => [entry.id, entry]))
+  const inbox = recommendations
+    .filter((recommendation) => recommendation.to_user_id === userId)
+    .map((recommendation) => ({
+      ...recommendation,
+      seen: Boolean(recommendation.seen),
+      from_user: usersById.get(recommendation.from_user_id) ?? null,
+      to_user: usersById.get(recommendation.to_user_id) ?? null,
+      dish_entry: entriesById.get(recommendation.dish_entry_id) ?? null,
+    }))
+
+  return {
+    recommendations: inbox,
+    unseen: inbox.filter((recommendation) => !recommendation.seen),
+    unseen_count: inbox.filter((recommendation) => !recommendation.seen).length,
+  }
+}
+
+async function createAchievement(payload) {
+  const userId = getRequiredString(payload.user_id, 'el user_id')
+  const badgeType = getRequiredString(payload.badge_type, 'el badge_type')
+  const notified = toBooleanFlag(payload.notified, 0)
+  const allowedBadgeTypes = [
+    'primer_plato',
+    'cinco_platos',
+    'diez_platos',
+    'primer_restaurante',
+    'cinco_restaurantes',
+    'catador_social',
+    'explorador',
+    'racha_semanal',
+    'top_score',
+    'coleccionista_inspo',
+  ]
+
+  if (!allowedBadgeTypes.includes(badgeType)) {
+    throw new Error('El badge_type no es válido.')
+  }
+
+  const [users, achievements] = await Promise.all([
+    runJsonQuery(ROUTE_QUERIES.users),
+    runJsonQuery(ROUTE_QUERIES.achievements),
+  ])
+
+  ensureRecordExists(users, userId, 'el usuario')
+  const existingAchievement = achievements.find(
+    (achievement) =>
+      achievement.user_id === userId && achievement.badge_type === badgeType,
+  )
+
+  if (existingAchievement) {
+    return {
+      ...existingAchievement,
+      notified: Boolean(existingAchievement.notified),
+    }
+  }
+
+  const record = {
+    id: randomUUID(),
+    user_id: userId,
+    badge_type: badgeType,
+    unlocked_at: new Date().toISOString(),
+    notified,
+  }
+
+  const sql = `
+    INSERT INTO achievements (id, user_id, badge_type, unlocked_at, notified)
+    VALUES (
+      ${sqlValue(record.id)},
+      ${sqlValue(record.user_id)},
+      ${sqlValue(record.badge_type)},
+      ${sqlValue(record.unlocked_at)},
+      ${numericSqlValue(record.notified)}
+    );
+  `
+
+  await runWriteQuery(sql)
+  return {
+    ...record,
+    notified: Boolean(record.notified),
+  }
+}
+
+async function getAchievements(userId) {
+  const [users, achievements, dishEntries] = await Promise.all([
+    runJsonQuery(ROUTE_QUERIES.users),
+    runJsonQuery(ROUTE_QUERIES.achievements),
+    runJsonQuery(ROUTE_QUERIES.dishEntries),
+  ])
+
+  ensureRecordExists(users, userId, 'el usuario solicitado')
+  const userAchievements = achievements
+    .filter((achievement) => achievement.user_id === userId)
+    .map((achievement) => ({
+      ...achievement,
+      notified: Boolean(achievement.notified),
+    }))
+
+  return {
+    achievements: userAchievements,
+    weekly_streak: calculateWeeklyStreak(dishEntries, userId),
+    total_achievements: userAchievements.length,
+  }
+}
+
 async function loadPublicSharePayload(token) {
   const shareTokens = await runJsonQuery(ROUTE_QUERIES.publicShareTokens)
   const shareToken = shareTokens.find((item) => item.token === token)
@@ -783,6 +1744,13 @@ async function loadBootstrap() {
     dishTypes,
     dishEntries,
     publicShareTokens,
+    follows,
+    reactions,
+    comments,
+    inspirationLists,
+    inspirationListItems,
+    recommendations,
+    achievements,
   ] = await Promise.all(
     Object.values(ROUTE_QUERIES).map((sql) => runJsonQuery(sql)),
   )
@@ -796,10 +1764,34 @@ async function loadBootstrap() {
     dishTypes,
     dishEntries,
     publicShareTokens,
+    follows,
+    reactions,
+    comments: comments.map((comment) => ({
+      ...comment,
+      mentions: parseJsonValue(comment.mentions, []),
+    })),
+    inspirationLists: inspirationLists.map((list) => ({
+      ...list,
+      is_default: Boolean(list.is_default),
+    })),
+    inspirationListItems: inspirationListItems.map((item) => ({
+      ...item,
+      tried: Boolean(item.tried),
+    })),
+    recommendations: recommendations.map((recommendation) => ({
+      ...recommendation,
+      seen: Boolean(recommendation.seen),
+    })),
+    achievements: achievements.map((achievement) => ({
+      ...achievement,
+      notified: Boolean(achievement.notified),
+    })),
   }
 }
 
-async function handleRoute(pathname, response) {
+async function handleRoute(url, response) {
+  const { pathname, searchParams } = url
+
   if (pathname === '/api/health') {
     return sendJson(response, 200, {
       ok: true,
@@ -816,6 +1808,41 @@ async function handleRoute(pathname, response) {
   if (pathname.startsWith('/api/public-share/')) {
     const token = pathname.replace('/api/public-share/', '').trim()
     const payload = await loadPublicSharePayload(token)
+    return sendJson(response, 200, payload)
+  }
+
+  if (pathname === '/api/follows') {
+    const userId = getCurrentUserIdFromSearchParams(searchParams)
+    const payload = await getFollowState(userId)
+    return sendJson(response, 200, payload)
+  }
+
+  if (pathname === '/api/community/feed') {
+    const payload = await getCommunityFeed(searchParams)
+    return sendJson(response, 200, payload)
+  }
+
+  if (pathname.startsWith('/api/comments/')) {
+    const entryId = decodeURIComponent(pathname.replace('/api/comments/', ''))
+    const comments = await getCommentsForEntry(entryId)
+    return sendJson(response, 200, { comments })
+  }
+
+  if (pathname === '/api/inspiration-lists') {
+    const userId = getCurrentUserIdFromSearchParams(searchParams)
+    const inspirationLists = await getInspirationLists(userId)
+    return sendJson(response, 200, { inspirationLists })
+  }
+
+  if (pathname === '/api/recommendations') {
+    const userId = getCurrentUserIdFromSearchParams(searchParams)
+    const payload = await getRecommendations(userId)
+    return sendJson(response, 200, payload)
+  }
+
+  if (pathname === '/api/achievements') {
+    const userId = getCurrentUserIdFromSearchParams(searchParams)
+    const payload = await getAchievements(userId)
     return sendJson(response, 200, payload)
   }
 
@@ -840,7 +1867,7 @@ const server = http.createServer(async (request, response) => {
     response.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Headers': 'Content-Type',
-      'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     })
     response.end()
     return
@@ -850,7 +1877,14 @@ const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, `http://${request.headers.host}`)
 
     if (request.method === 'GET') {
-      await handleRoute(url.pathname, response)
+      await handleRoute(url, response)
+      return
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/follows') {
+      const body = await readJsonBody(request)
+      const follow = await createFollow(body)
+      sendJson(response, 201, { follow })
       return
     }
 
@@ -886,6 +1920,48 @@ const server = http.createServer(async (request, response) => {
       const body = await readJsonBody(request)
       const dishEntry = await createDishEntry(body)
       sendJson(response, 201, { dishEntry })
+      return
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/reactions') {
+      const body = await readJsonBody(request)
+      const reaction = await addOrUpdateReaction(body)
+      sendJson(response, 201, { reaction })
+      return
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/comments') {
+      const body = await readJsonBody(request)
+      const comment = await createComment(body)
+      sendJson(response, 201, { comment })
+      return
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/inspiration-lists') {
+      const body = await readJsonBody(request)
+      const inspirationList = await createInspirationList(body)
+      sendJson(response, 201, { inspirationList })
+      return
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/inspiration-list-items') {
+      const body = await readJsonBody(request)
+      const inspirationListItem = await createInspirationListItem(body)
+      sendJson(response, 201, { inspirationListItem })
+      return
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/recommendations') {
+      const body = await readJsonBody(request)
+      const recommendation = await createRecommendation(body)
+      sendJson(response, 201, { recommendation })
+      return
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/achievements') {
+      const body = await readJsonBody(request)
+      const achievement = await createAchievement(body)
+      sendJson(response, 201, { achievement })
       return
     }
 
@@ -949,6 +2025,43 @@ const server = http.createServer(async (request, response) => {
       )
       const dishEntry = await updateDishEntry(dishEntryId, body)
       sendJson(response, 200, { dishEntry })
+      return
+    }
+
+    if (
+      request.method === 'PUT' &&
+      url.pathname.startsWith('/api/inspiration-list-items/')
+    ) {
+      const body = await readJsonBody(request)
+      const itemId = decodeURIComponent(
+        url.pathname.replace('/api/inspiration-list-items/', ''),
+      )
+      const inspirationListItem = await updateInspirationListItem(itemId, body)
+      sendJson(response, 200, { inspirationListItem })
+      return
+    }
+
+    if (request.method === 'PUT' && url.pathname.startsWith('/api/recommendations/')) {
+      const recommendationId = decodeURIComponent(
+        url.pathname.replace('/api/recommendations/', ''),
+      )
+      const recommendation = await markRecommendationSeen(recommendationId)
+      sendJson(response, 200, { recommendation })
+      return
+    }
+
+    if (request.method === 'DELETE' && url.pathname.startsWith('/api/follows/')) {
+      const followedUserId = decodeURIComponent(url.pathname.replace('/api/follows/', ''))
+      const currentUserId = getCurrentUserIdFromSearchParams(url.searchParams)
+      const result = await deleteFollow(currentUserId, followedUserId)
+      sendJson(response, 200, result)
+      return
+    }
+
+    if (request.method === 'DELETE' && url.pathname.startsWith('/api/reactions/')) {
+      const reactionId = decodeURIComponent(url.pathname.replace('/api/reactions/', ''))
+      const result = await deleteReaction(reactionId)
+      sendJson(response, 200, result)
       return
     }
 

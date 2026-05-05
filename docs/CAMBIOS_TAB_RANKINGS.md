@@ -21,6 +21,44 @@ La pestaña está implementada hoy en:
 - `src/lib/constants.js`
 - `src/App.css`
 
+## Estado de implementación actual
+Estado real tras la última sesión sobre `Rankings`:
+
+- `Paso 1` del documento: implementado en código
+- `Paso 2` del documento: implementado en código
+- `Paso 3` del documento: implementado en código
+- `Paso 4` del documento: implementado en código
+- `Paso 5` del documento: implementado en código
+- `Paso 6` del documento: implementado en código
+- `Paso 7` del documento: implementado en código
+- verificación local: pendiente por limitación del entorno
+
+### Ya hecho en código
+- eliminado el hero/tagline de `Rankings`
+- eliminado el contador `X resultados encontrados`
+- eliminado el hint visual `Desliza horizontalmente...`
+- sustituido el botón textual `Filtrar` por trigger icon-only
+- ampliado `SectionHeader.jsx` para soportar acción custom con `aria-label`
+- añadido estilo específico del botón icon-only en `App.css`
+- compactado el selector `Mi ranking / Mi grupo / Comunidad` con variante propia de `Rankings`
+- añadido selector inline `Top N` con default `10`
+- movido el límite fuera de `RankingList.jsx`
+- sustituidos los tipos legacy por `Por categoría / Por tipo de plato / Global`
+- añadidas sub-vistas dentro de `Global`
+- implementados builders específicos para rankings filtrados y globales
+- persistidos recientes de tipo de plato en `localStorage`
+- sustituido el detalle modal por expansión inline compacta
+- compactadas las filas de ranking
+
+### Aún no hecho
+- verificación local con `npm run lint`
+- verificación local con `npm run build`
+- revisión manual final en móvil
+
+Nota:
+- el bloque de estado anterior es la referencia vigente
+- las secciones posteriores del documento mantienen el desglose original de requisitos y punto de partida para trazabilidad
+
 ### Estructura actual de la pantalla
 Hoy la pantalla usa esta secuencia visual:
 
@@ -814,8 +852,29 @@ Se considerará completado cuando:
 - tocar una fila expanda un panel inline compacto
 - no se haya alterado el contenido del panel de filtros
 
+## 15.1. Progreso actual del criterio de aceptación
+
+### Completado
+- [x] No intro text
+- [x] No scroll hint text
+- [x] No results counter
+- [x] `Filtrar` reemplazado por botón icon-only
+- [x] `Top N` selector `[5][10][25][50]`, default `10`
+- [x] Context selector compacto
+- [x] Tres modos: `Por categoría / Por tipo de plato / Global`
+- [x] Flujo `Por categoría`
+- [x] Flujo `Por tipo de plato`
+- [x] Sub-vistas de `Global`
+- [x] Fórmula global Bayesian × log(n) para restaurantes
+- [x] Panel expandido inline compacto
+- [x] Filas compactas con 5–6 visibles
+
+### Pendiente
+- [ ] Verificación local con `npm run lint`
+- [ ] Verificación local con `npm run build`
+
 ## 16. Nota de continuidad
-El repositorio sigue sin `docs/CHECKPOINT.md`, así que si después se implementa esta especificación convendría registrar allí:
+`docs/CHECKPOINT.md` ya existe y debe mantenerse alineado cuando avance esta especificación. Conviene registrar allí:
 
 - nuevo modelo de modos/submodos de Rankings
 - fórmula global por restaurante

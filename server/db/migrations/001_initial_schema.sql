@@ -132,6 +132,98 @@ CREATE TABLE IF NOT EXISTS public_share_tokens (
   FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS follows (
+  follower_user_id TEXT NOT NULL,
+  followed_user_id TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (follower_user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (followed_user_id) REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE (follower_user_id, followed_user_id),
+  CHECK (follower_user_id != followed_user_id)
+);
+
+CREATE TABLE IF NOT EXISTS reactions (
+  id TEXT PRIMARY KEY,
+  dish_entry_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  reaction_type TEXT NOT NULL CHECK (
+    reaction_type IN ('quiero_probar', 'ya_probe', 'que_hambre', 'mejorable', 'paso')
+  ),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (dish_entry_id) REFERENCES dish_entries(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE (dish_entry_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS comments (
+  id TEXT PRIMARY KEY,
+  dish_entry_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  text TEXT NOT NULL CHECK (length(trim(text)) BETWEEN 1 AND 500),
+  mentions TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(mentions)),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (dish_entry_id) REFERENCES dish_entries(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS inspiration_lists (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  name TEXT NOT NULL CHECK (length(trim(name)) BETWEEN 1 AND 120),
+  is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS inspiration_list_items (
+  id TEXT PRIMARY KEY,
+  list_id TEXT NOT NULL,
+  dish_entry_id TEXT NOT NULL,
+  tried INTEGER NOT NULL DEFAULT 0 CHECK (tried IN (0, 1)),
+  tried_at TEXT,
+  saved_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (list_id) REFERENCES inspiration_lists(id) ON DELETE CASCADE,
+  FOREIGN KEY (dish_entry_id) REFERENCES dish_entries(id) ON DELETE CASCADE,
+  UNIQUE (list_id, dish_entry_id),
+  CHECK (tried = 0 OR tried_at IS NOT NULL)
+);
+
+CREATE TABLE IF NOT EXISTS recommendations (
+  id TEXT PRIMARY KEY,
+  from_user_id TEXT NOT NULL,
+  to_user_id TEXT NOT NULL,
+  dish_entry_id TEXT NOT NULL,
+  seen INTEGER NOT NULL DEFAULT 0 CHECK (seen IN (0, 1)),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (from_user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (to_user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (dish_entry_id) REFERENCES dish_entries(id) ON DELETE CASCADE,
+  CHECK (from_user_id != to_user_id)
+);
+
+CREATE TABLE IF NOT EXISTS achievements (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  badge_type TEXT NOT NULL CHECK (
+    badge_type IN (
+      'primer_plato',
+      'cinco_platos',
+      'diez_platos',
+      'primer_restaurante',
+      'cinco_restaurantes',
+      'catador_social',
+      'explorador',
+      'racha_semanal',
+      'top_score',
+      'coleccionista_inspo'
+    )
+  ),
+  unlocked_at TEXT NOT NULL DEFAULT (datetime('now')),
+  notified INTEGER NOT NULL DEFAULT 0 CHECK (notified IN (0, 1)),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE (user_id, badge_type)
+);
+
 CREATE INDEX IF NOT EXISTS idx_groups_invite_code ON "groups"(invite_code);
 CREATE INDEX IF NOT EXISTS idx_group_members_group_id ON group_members(group_id);
 CREATE INDEX IF NOT EXISTS idx_group_members_user_id ON group_members(user_id);
@@ -145,6 +237,19 @@ CREATE INDEX IF NOT EXISTS idx_dish_entries_created_by_user_id ON dish_entries(c
 CREATE INDEX IF NOT EXISTS idx_dish_entries_group_id ON dish_entries(group_id);
 CREATE INDEX IF NOT EXISTS idx_dish_entries_fecha ON dish_entries(fecha);
 CREATE INDEX IF NOT EXISTS idx_public_share_tokens_token ON public_share_tokens(token);
+CREATE INDEX IF NOT EXISTS idx_follows_follower_user_id ON follows(follower_user_id);
+CREATE INDEX IF NOT EXISTS idx_follows_followed_user_id ON follows(followed_user_id);
+CREATE INDEX IF NOT EXISTS idx_reactions_dish_entry_id ON reactions(dish_entry_id);
+CREATE INDEX IF NOT EXISTS idx_reactions_user_id ON reactions(user_id);
+CREATE INDEX IF NOT EXISTS idx_comments_dish_entry_id ON comments(dish_entry_id);
+CREATE INDEX IF NOT EXISTS idx_comments_user_id ON comments(user_id);
+CREATE INDEX IF NOT EXISTS idx_inspiration_lists_user_id ON inspiration_lists(user_id);
+CREATE INDEX IF NOT EXISTS idx_inspiration_list_items_list_id ON inspiration_list_items(list_id);
+CREATE INDEX IF NOT EXISTS idx_inspiration_list_items_dish_entry_id ON inspiration_list_items(dish_entry_id);
+CREATE INDEX IF NOT EXISTS idx_recommendations_to_user_id ON recommendations(to_user_id);
+CREATE INDEX IF NOT EXISTS idx_recommendations_from_user_id ON recommendations(from_user_id);
+CREATE INDEX IF NOT EXISTS idx_recommendations_dish_entry_id ON recommendations(dish_entry_id);
+CREATE INDEX IF NOT EXISTS idx_achievements_user_id ON achievements(user_id);
 
 CREATE VIEW IF NOT EXISTS restaurant_scores AS
 SELECT

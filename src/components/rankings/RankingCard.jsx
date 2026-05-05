@@ -1,33 +1,51 @@
 import { formatScore } from '../../lib/format.js'
 import { getScoreTone } from '../../lib/scoring.js'
 
-export function RankingCard({ entry, index, onSelect }) {
+function getRankBadge(index) {
+  if (index === 0) {
+    return '🥇'
+  }
+
+  if (index === 1) {
+    return '🥈'
+  }
+
+  if (index === 2) {
+    return '🥉'
+  }
+
+  return String(index + 1)
+}
+
+export function RankingCard({ entry, index, isExpanded = false, onToggle }) {
   return (
     <button
-      className="ranking-card ranking-card--button"
+      className={`ranking-card ranking-card--button ranking-card--compact${isExpanded ? ' ranking-card--expanded' : ''}`}
       type="button"
-      onClick={() => onSelect?.(entry)}
+      aria-expanded={isExpanded}
+      onClick={() => onToggle?.(entry)}
     >
-      <div className="ranking-card__meta">
-        <div className="ranking-card__title">
-          <span className="emoji-badge" aria-hidden="true">
-            {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '🍽️'}
-          </span>
-          <div>
-            <strong>
-              {index + 1}. {entry.restaurantName}
-            </strong>
-            <p>
-              {entry.dishTypeName ?? entry.categoryName ?? entry.dishName ?? 'Ranking'}
-              {' • '}
-              {entry.votos} votos
-            </p>
-          </div>
-        </div>
+      <span className="ranking-card__compact-rank" aria-hidden="true">
+        {getRankBadge(index)}
+      </span>
+
+      <div className="ranking-card__compact-main">
+        <strong className="ranking-card__compact-title">
+          {entry.primaryLabel ?? entry.restaurantName ?? 'Ranking'}
+        </strong>
+        <p className="ranking-card__compact-subtitle">
+          {entry.secondaryLabel ?? entry.dishTypeName ?? entry.categoryName ?? entry.dishName ?? 'Sin detalle'}
+        </p>
+      </div>
+
+      <div className="ranking-card__compact-side">
         <span
           className={`ranking-card__score ranking-card__score--${getScoreTone(entry.score)}`}
         >
           {formatScore(entry.score)}
+        </span>
+        <span className="ranking-card__compact-count">
+          {entry.countLabel ?? `${entry.votos} votos`}
         </span>
       </div>
     </button>

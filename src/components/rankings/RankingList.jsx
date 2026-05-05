@@ -1,6 +1,11 @@
 import { RankingCard } from './RankingCard.jsx'
 
-export function RankingList({ entries, onSelect }) {
+export function RankingList({
+  entries,
+  expandedEntryId = '',
+  onToggle,
+  renderExpandedContent,
+}) {
   if (entries.length === 0) {
     return (
       <article className="surface-card">
@@ -11,15 +16,22 @@ export function RankingList({ entries, onSelect }) {
   }
 
   return (
-    <div className="list-stack">
-      {entries.slice(0, 5).map((entry, index) => (
-        <RankingCard
-          key={entry.id}
-          entry={entry}
-          index={index}
-          onSelect={onSelect}
-        />
-      ))}
+    <div className="list-stack rankings-list">
+      {entries.map((entry, index) => {
+        const isExpanded = entry.id === expandedEntryId
+
+        return (
+          <div key={entry.id} className="rankings-list__item">
+            <RankingCard
+              entry={entry}
+              index={index}
+              isExpanded={isExpanded}
+              onToggle={onToggle}
+            />
+            {isExpanded && renderExpandedContent ? renderExpandedContent(entry) : null}
+          </div>
+        )
+      })}
     </div>
   )
 }

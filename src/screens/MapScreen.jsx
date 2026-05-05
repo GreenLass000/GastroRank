@@ -1,250 +1,863 @@
-import { useMemo, useState } from 'react'
-import { SectionHeader } from '../components/layout/SectionHeader.jsx'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { MapView } from '../components/map/MapView.jsx'
+import { usePersistentState } from '../hooks/usePersistentState.js'
 import { useAppState } from '../hooks/useAppState.js'
-import { formatScore, formatShortAddress } from '../lib/format.js'
-import { PIN_STYLES } from '../lib/constants.js'
-import { generateGoogleMapsUrl, getMapsProvider } from '../lib/maps.js'
+import { filterDishEntries, normalizeFilters } from '../lib/filters.js'
+import {
+  formatDistance,
+  formatScore,
+  formatStreetAddress,
+} from '../lib/format.js'
+import { DEFAULT_PIN_STYLE, PIN_STYLES, STORAGE_KEYS } from '../lib/constants.js'
+import {
+  buildPlaceSuggestions,
+  calculateDistanceMeters,
+  DEFAULT_MAP_CENTER,
+  fetchPlaceSuggestions,
+  generateGoogleMapsDirectionsUrl,
+  hasValidCoordinates,
+  mergePlaceSuggestions,
+} from '../lib/maps.js'
+import { calculateAverageScore, getScoreTone } from '../lib/scoring.js'
 
-export function MapScreen({
-  onCreateRestaurantAtLocation,
-  onNavigate,
-  onOpenEntity,
+const PIN_STYLE_OPTIONS = [
+  {
+    id: 'Nombre',
+    label: '🔤 Nombre',
+    previewText: 'Bar',
+    previewKind: 'text',
+  },
+  {
+    id: 'Categoría',
+    label: '🏷 Categoría',
+    previewText: '🍽️',
+    previewKind: 'emoji',
+  },
+  {
+    id: 'Precio',
+    label: '💰 Precio',
+    previewText: '€€',
+    previewKind: 'text',
+  },
+  {
+    id: 'Puntuación',
+    label: '⭐ Puntuación',
+    previewText: '8.5',
+    previewKind: 'score',
+  },
+]
+
+function isRestaurantInsideBounds(restaurant, bounds) {
+  if (!bounds || !hasValidCoordinates(restaurant)) {
+    return false
+  }
+
+  return (
+    Number(restaurant.lat) <= bounds.north &&
+    Number(restaurant.lat) >= bounds.south &&
+    Number(restaurant.lng) <= bounds.east &&
+    Number(restaurant.lng) >= bounds.west
+  )
+}
+
+function buildMapRestaurants({
+  categories,
+  defaultPinStyle,
+  dishEntries,
+  dishTypes,
+  restaurants,
+  userPosition,
 }) {
+  return restaurants.map((restaurant) => {
+    const restaurantEntries = dishEntries.filter(
+      (entry) => entry.restaurant_id === restaurant.id,
+    )
+    const bestEntry = [...restaurantEntries].sort(
+      (left, right) => right.puntuacion_general - left.puntuacion_general,
+    )[0]
+    const bestDishType = dishTypes.find(
+      (dishType) => dishType.id === bestEntry?.tipo_plato_id,
+    )
+    const bestCategory = categories.find(
+      (category) => category.id === bestEntry?.categoria_id,
+    )
+    const distanceFromUserMeters = calculateDistanceMeters(userPosition, restaurant)
+
+    return {
+      ...restaurant,
+      categoryIcon: bestCategory?.icono || '🍽️',
+      bestDishName:
+        bestEntry?.nombre_plato ||
+        bestDishType?.nombre ||
+        'Sin platos valorados todavía',
+      directionsUrl: generateGoogleMapsDirectionsUrl(restaurant),
+      distanceFromUserMeters,
+      distanceFromUserLabel: formatDistance(distanceFromUserMeters),
+      pinStyle: PIN_STYLES.includes(defaultPinStyle) ? defaultPinStyle : DEFAULT_PIN_STYLE,
+      restaurant_score: calculateAverageScore(restaurantEntries),
+      score: calculateAverageScore(restaurantEntries),
+      total_entries: restaurantEntries.length,
+    }
+  })
+}
+
+function buildSheetPreviewItems(visibleRestaurants, otherRestaurants) {
+  return [...visibleRestaurants, ...otherRestaurants].slice(0, 2)
+}
+
+export function MapScreen({ onCreateRestaurantAtLocation, onOpenEntity }) {
   const {
+    activeFilters,
     categories,
-    clearRestaurantPinStyle,
     defaultPinStyle,
     dishEntries,
     dishTypes,
-    restaurantPinStyleOverrides,
-    restaurantsByScore,
+    filterOrigin,
+    restaurants,
     setDefaultPinStyle,
-    setRestaurantPinStyle,
   } = useAppState()
   const [selectedRestaurantId, setSelectedRestaurantId] = useState('')
   const [draftLocation, setDraftLocation] = useState(null)
-  const provider = getMapsProvider()
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [isListExpanded, setIsListExpanded] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchSuggestions, setSearchSuggestions] = useState([])
+  const [searchFeedback, setSearchFeedback] = useState({ tone: '', message: '' })
+  const [viewportState, setViewportState] = useState({
+    center: hasValidCoordinates(filterOrigin) ? filterOrigin : DEFAULT_MAP_CENTER,
+    bounds: null,
+    zoom: 14,
+  })
+  const [viewportRequest, setViewportRequest] = useState({
+    center: hasValidCoordinates(filterOrigin) ? filterOrigin : DEFAULT_MAP_CENTER,
+    zoom: 14,
+    animation: 'set',
+    key: 'initial',
+  })
+  const [hasSeenOnboarding, setHasSeenOnboarding] = usePersistentState(
+    STORAGE_KEYS.mapOnboardingSeen,
+    false,
+  )
+  const ignoreViewportInteractionUntilRef = useRef(0)
+  const hasViewportInitializedRef = useRef(false)
+  const hasUserInteractedRef = useRef(false)
+  const listSheetDragStartRef = useRef(null)
+  const detailSheetDragStartRef = useRef(null)
+  const skipNextSearchEffectRef = useRef(false)
 
-  const restaurants = useMemo(
+  const userPosition = hasValidCoordinates(filterOrigin) ? filterOrigin : DEFAULT_MAP_CENTER
+  const restaurantsById = useMemo(
+    () => Object.fromEntries(restaurants.map((restaurant) => [restaurant.id, restaurant])),
+    [restaurants],
+  )
+  const filtersWithoutRadius = useMemo(
     () =>
-      restaurantsByScore.map((restaurant) => {
-        const restaurantEntries = dishEntries.filter(
-          (entry) => entry.restaurant_id === restaurant.id,
-        )
-        const bestEntry = [...restaurantEntries].sort(
-          (left, right) => right.puntuacion_general - left.puntuacion_general,
-        )[0]
-        const bestDishType = dishTypes.find(
-          (dishType) => dishType.id === bestEntry?.tipo_plato_id,
-        )
-        const bestCategory = categories.find(
-          (category) => category.id === bestEntry?.categoria_id,
-        )
+      normalizeFilters(
+        {
+          ...activeFilters,
+          radiusKm: '',
+        },
+        dishTypes,
+      ),
+    [activeFilters, dishTypes],
+  )
+  const filteredEntriesWithoutRadius = useMemo(
+    () =>
+      filterDishEntries({
+        dishTypes,
+        entries: dishEntries,
+        filters: filtersWithoutRadius,
+        filterOrigin,
+        restaurantsById,
+      }),
+    [dishEntries, dishTypes, filterOrigin, filtersWithoutRadius, restaurantsById],
+  )
+  const filteredRestaurantsWithoutRadius = useMemo(() => {
+    const filteredRestaurantIds = new Set(
+      filteredEntriesWithoutRadius.map((entry) => entry.restaurant_id),
+    )
 
-        return {
-          ...restaurant,
-          score: restaurant.restaurant_score ?? 0,
-          pinStyle:
-            restaurantPinStyleOverrides[restaurant.id] || defaultPinStyle,
-          bestDishName:
-            bestEntry?.nombre_plato ||
-            bestDishType?.nombre ||
-            'Sin platos valorados todavía',
-          bestDishScore: bestEntry?.puntuacion_general ?? null,
-          categoryIcon: bestCategory?.icono || '🍽️',
-          mapsUrl: restaurant.google_maps_url || generateGoogleMapsUrl(restaurant),
-        }
+    return restaurants.filter((restaurant) => filteredRestaurantIds.has(restaurant.id))
+  }, [filteredEntriesWithoutRadius, restaurants])
+  const mapRestaurants = useMemo(
+    () =>
+      buildMapRestaurants({
+        categories,
+        defaultPinStyle,
+        dishEntries: filteredEntriesWithoutRadius,
+        dishTypes,
+        restaurants: filteredRestaurantsWithoutRadius.filter((restaurant) =>
+          hasValidCoordinates(restaurant),
+        ),
+        userPosition,
       }),
     [
       categories,
       defaultPinStyle,
-      dishEntries,
       dishTypes,
-      restaurantPinStyleOverrides,
-      restaurantsByScore,
+      filteredEntriesWithoutRadius,
+      filteredRestaurantsWithoutRadius,
+      userPosition,
     ],
   )
-
-  const effectiveSelectedRestaurantId = draftLocation
-    ? ''
-    : selectedRestaurantId || restaurants[0]?.id || ''
+  const activeRadiusMeters = useMemo(() => {
+    const radiusKm = Number(activeFilters.radiusKm)
+    return Number.isFinite(radiusKm) && radiusKm > 0
+      ? radiusKm * 1000
+      : Number.POSITIVE_INFINITY
+  }, [activeFilters.radiusKm])
+  const restaurantsWithinActiveRadius = useMemo(
+    () =>
+      mapRestaurants.filter(
+        (restaurant) =>
+          calculateDistanceMeters(viewportState.center, restaurant) <= activeRadiusMeters,
+      ),
+    [activeRadiusMeters, mapRestaurants, viewportState.center],
+  )
+  const restaurantsForMap = useMemo(
+    () =>
+      restaurantsWithinActiveRadius.map((restaurant) => ({
+        ...restaurant,
+        pinStyle: defaultPinStyle,
+      })),
+    [defaultPinStyle, restaurantsWithinActiveRadius],
+  )
+  const visibleRestaurants = useMemo(
+    () =>
+      restaurantsWithinActiveRadius
+        .filter((restaurant) => isRestaurantInsideBounds(restaurant, viewportState.bounds))
+        .map((restaurant) => ({
+          ...restaurant,
+          distanceFromCenterMeters: calculateDistanceMeters(
+            viewportState.center,
+            restaurant,
+          ),
+        }))
+        .sort(
+          (left, right) =>
+            left.distanceFromCenterMeters - right.distanceFromCenterMeters ||
+            right.restaurant_score - left.restaurant_score,
+        ),
+    [restaurantsWithinActiveRadius, viewportState.bounds, viewportState.center],
+  )
+  const otherNearbyRestaurants = useMemo(
+    () =>
+      restaurantsWithinActiveRadius
+        .filter((restaurant) => !isRestaurantInsideBounds(restaurant, viewportState.bounds))
+        .map((restaurant) => ({
+          ...restaurant,
+          distanceFromCenterMeters: calculateDistanceMeters(
+            viewportState.center,
+            restaurant,
+          ),
+        }))
+        .sort(
+          (left, right) =>
+            left.distanceFromCenterMeters - right.distanceFromCenterMeters ||
+            right.restaurant_score - left.restaurant_score,
+        ),
+    [restaurantsWithinActiveRadius, viewportState.bounds, viewportState.center],
+  )
+  const previewRestaurants = useMemo(
+    () => buildSheetPreviewItems(visibleRestaurants, otherNearbyRestaurants),
+    [otherNearbyRestaurants, visibleRestaurants],
+  )
   const selectedRestaurant =
-    restaurants.find((restaurant) => restaurant.id === effectiveSelectedRestaurantId) ||
+    restaurantsWithinActiveRadius.find((restaurant) => restaurant.id === selectedRestaurantId) ||
     null
 
-  return (
-    <section className="screen" aria-label="Pantalla de mapa">
-      <article className="screen__hero">
-        <h2>Mapa interactivo con selección deliberada</h2>
-        <p>
-          El mapa pinta restaurantes reales, diferencia tap de long-press y abre
-          detalle útil desde cada pin.
-        </p>
-      </article>
+  useEffect(() => {
+    if (hasSeenOnboarding) {
+      return undefined
+    }
 
-      <SectionHeader
-        title="Vista del mapa"
-        actionLabel={provider === 'leaflet-osm' ? 'OpenStreetMap' : 'Mapa'}
-        onAction={() => {
-          window.open('https://www.openstreetmap.org', '_blank', 'noreferrer')
-        }}
-      />
-      <article className="map-card">
-        <MapView
-          allowAutoLocate
-          instructionLabel="Toca un pin para ver detalle o mantén pulsado 500 ms para crear restaurante."
-          markers={restaurants}
-          onLongPress={(location) => {
-            setDraftLocation(location)
-            setSelectedRestaurantId('')
-          }}
-          onSelectMarker={setSelectedRestaurantId}
-          pinStyle={defaultPinStyle}
-          selectedMarkerId={effectiveSelectedRestaurantId}
-          tempMarker={
-            draftLocation
-              ? {
-                  ...draftLocation,
-                  nombre: 'Nueva ubicación',
-                  score: 9,
-                  categoryIcon: '📍',
-                }
-              : null
-          }
-        />
-        {draftLocation ? (
-          <div className="map-action-banner">
-            <div>
-              <strong>Nuevo punto listo ✅</strong>
-              <p>
-                Lat {draftLocation.lat.toFixed(5)} • Lng {draftLocation.lng.toFixed(5)}
-              </p>
-            </div>
-            <div className="map-action-banner__actions">
+    const timeout = window.setTimeout(() => {
+      setHasSeenOnboarding(true)
+    }, 4000)
+
+    return () => window.clearTimeout(timeout)
+  }, [hasSeenOnboarding, setHasSeenOnboarding])
+
+  useEffect(() => {
+    if (!hasValidCoordinates(filterOrigin) || hasUserInteractedRef.current) {
+      return
+    }
+
+    ignoreViewportInteractionUntilRef.current = Date.now() + 900
+    setViewportRequest({
+      center: filterOrigin,
+      zoom: 14,
+      animation: 'set',
+      key: `gps:${filterOrigin.lat}:${filterOrigin.lng}`,
+    })
+  }, [filterOrigin])
+
+  useEffect(() => {
+    if (!selectedRestaurantId) {
+      return
+    }
+
+    const isStillVisible = restaurantsWithinActiveRadius.some(
+      (restaurant) => restaurant.id === selectedRestaurantId,
+    )
+
+    if (!isStillVisible) {
+      setSelectedRestaurantId('')
+    }
+  }, [restaurantsWithinActiveRadius, selectedRestaurantId])
+
+  useEffect(() => {
+    const query = searchQuery.trim()
+
+    if (skipNextSearchEffectRef.current) {
+      skipNextSearchEffectRef.current = false
+      return undefined
+    }
+
+    if (query.length < 3) {
+      setSearchSuggestions([])
+      setSearchFeedback({ tone: '', message: '' })
+      return undefined
+    }
+
+    const controller = new AbortController()
+    const timeout = window.setTimeout(async () => {
+      try {
+        setSearchFeedback({ tone: 'info', message: 'Cargando...' })
+        const localSuggestions = buildPlaceSuggestions(query, restaurants)
+        const remoteSuggestions = await fetchPlaceSuggestions(query, {
+          signal: controller.signal,
+        })
+        const mergedSuggestions = mergePlaceSuggestions(
+          localSuggestions,
+          remoteSuggestions,
+        )
+
+        setSearchSuggestions(mergedSuggestions)
+        setSearchFeedback(
+          mergedSuggestions.length > 0
+            ? { tone: '', message: '' }
+            : { tone: 'error', message: 'No se encontraron lugares para esa búsqueda.' },
+        )
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return
+        }
+
+        const localSuggestions = buildPlaceSuggestions(query, restaurants)
+        setSearchSuggestions(localSuggestions)
+        setSearchFeedback({
+          tone: 'error',
+          message:
+            localSuggestions.length > 0
+              ? 'No se pudo consultar fuera, pero se muestran coincidencias locales.'
+              : `Error al buscar ❌ — ${error instanceof Error ? error.message : 'No se pudo completar la búsqueda.'}`,
+        })
+      }
+    }, 180)
+
+    return () => {
+      controller.abort()
+      window.clearTimeout(timeout)
+    }
+  }, [restaurants, searchQuery])
+
+  function requestViewport(center, zoom = viewportState.zoom, animation = 'fly', key = 'manual') {
+    ignoreViewportInteractionUntilRef.current = Date.now() + 900
+    setViewportRequest({
+      center,
+      zoom,
+      animation,
+      key: `${key}:${Date.now()}`,
+    })
+  }
+
+  function openRestaurantDetail(restaurantId) {
+    if (!restaurantId) {
+      return
+    }
+
+    onOpenEntity?.({ type: 'restaurant', id: restaurantId })
+  }
+
+  function handleViewportChange(nextViewport) {
+    setViewportState(nextViewport)
+
+    if (!hasViewportInitializedRef.current) {
+      hasViewportInitializedRef.current = true
+      return
+    }
+
+    if (Date.now() < ignoreViewportInteractionUntilRef.current) {
+      return
+    }
+
+    hasUserInteractedRef.current = true
+  }
+
+  function handleLocationSelection(suggestion) {
+    skipNextSearchEffectRef.current = true
+    setSearchQuery(
+      suggestion.address ? `${suggestion.name} · ${suggestion.address}` : suggestion.name,
+    )
+    setSearchSuggestions([])
+    setSearchFeedback({ tone: '', message: '' })
+    setDraftLocation(null)
+    setSelectedRestaurantId('')
+    hasUserInteractedRef.current = true
+    requestViewport(
+      {
+        lat: Number(suggestion.lat),
+        lng: Number(suggestion.lng),
+      },
+      15,
+      'fly',
+      `search:${suggestion.id}`,
+    )
+  }
+
+  function handleListSheetHandlePointerDown(event) {
+    listSheetDragStartRef.current = event.clientY
+  }
+
+  function handleListSheetHandlePointerUp(event) {
+    if (typeof listSheetDragStartRef.current !== 'number') {
+      setIsListExpanded((current) => !current)
+      return
+    }
+
+    const deltaY = event.clientY - listSheetDragStartRef.current
+    listSheetDragStartRef.current = null
+
+    if (Math.abs(deltaY) < 10) {
+      setIsListExpanded((current) => !current)
+      return
+    }
+
+    if (deltaY < -24) {
+      setIsListExpanded(true)
+      return
+    }
+
+    if (deltaY > 24) {
+      setIsListExpanded(false)
+    }
+  }
+
+  function handleDetailSheetPointerDown(event) {
+    detailSheetDragStartRef.current = event.clientY
+  }
+
+  function handleDetailSheetPointerUp(event) {
+    if (typeof detailSheetDragStartRef.current !== 'number') {
+      return
+    }
+
+    const deltaY = event.clientY - detailSheetDragStartRef.current
+    detailSheetDragStartRef.current = null
+
+    if (deltaY > 36) {
+      setSelectedRestaurantId('')
+    }
+  }
+
+  return (
+    <section className="screen screen--map" aria-label="Pantalla de mapa">
+      <div className="field--autocomplete map-search">
+        <label className="map-search__field">
+          <span className="sr-only">Buscar zona o lugar</span>
+          <input
+            type="search"
+            value={searchQuery}
+            placeholder="🔍 Buscar zona, barrio o lugar..."
+            onChange={(event) => setSearchQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && searchSuggestions[0]) {
+                event.preventDefault()
+                handleLocationSelection(searchSuggestions[0])
+              }
+            }}
+          />
+        </label>
+        {searchFeedback.message ? (
+          <p className={`map-search__feedback map-search__feedback--${searchFeedback.tone || 'info'}`}>
+            {searchFeedback.message}
+          </p>
+        ) : null}
+        {searchSuggestions.length > 0 ? (
+          <div className="suggestion-dropdown">
+            {searchSuggestions.map((suggestion) => (
               <button
-                className="pill-button"
+                key={suggestion.id}
+                className="suggestion-card"
                 type="button"
-                onClick={() => setDraftLocation(null)}
+                onClick={() => handleLocationSelection(suggestion)}
               >
-                Cancelar
+                <strong>{suggestion.name}</strong>
+                <span>{suggestion.address || 'Ubicación seleccionable'}</span>
               </button>
-              <button
-                className="primary-button"
-                type="button"
-                onClick={() => onCreateRestaurantAtLocation?.(draftLocation)}
-              >
-                Crear restaurante aquí
-              </button>
-            </div>
+            ))}
           </div>
         ) : null}
-      </article>
+      </div>
 
-      <SectionHeader title="Estilos de pin" />
-      <div className="chip-row">
-        {PIN_STYLES.map((style) => (
+      <div className="map-pin-style-selector" role="tablist" aria-label="Estilo de pins">
+        {PIN_STYLE_OPTIONS.map((option) => (
           <button
-            key={style}
-            className={`chip${defaultPinStyle === style ? ' chip--active' : ''}`}
+            key={option.id}
+            className={`map-pin-style-chip${
+              defaultPinStyle === option.id ? ' map-pin-style-chip--active' : ''
+            }`}
             type="button"
-            onClick={() => setDefaultPinStyle(style)}
+            role="tab"
+            aria-selected={defaultPinStyle === option.id}
+            onClick={() => setDefaultPinStyle(option.id)}
           >
-            {style}
+            <span
+              className={`map-pin-style-chip__preview map-pin-style-chip__preview--${option.previewKind} ${
+                option.id === 'Puntuación'
+                  ? 'map-pin-style-chip__preview--good'
+                  : 'map-pin-style-chip__preview--neutral'
+              }`}
+              aria-hidden="true"
+            >
+              {option.previewText}
+            </span>
+            <span>{option.label}</span>
           </button>
         ))}
       </div>
 
-      <article className="surface-card">
-        <strong>Regla crítica</strong>
-        <p>
-          Un tap normal nunca debe crear restaurantes. La creación solo se activa
-          con long-press de al menos 500 ms.
-        </p>
-      </article>
-
-      {selectedRestaurant ? (
-        <article className="surface-card">
-          <strong>{selectedRestaurant.nombre}</strong>
-          <p>
-            {selectedRestaurant.precio_rango} •{' '}
-            {formatScore(selectedRestaurant.restaurant_score)} •{' '}
-            {selectedRestaurant.total_entries} platos valorados
-          </p>
-          <p>
-            Mejor plato: {selectedRestaurant.bestDishName}
-            {typeof selectedRestaurant.bestDishScore === 'number'
-              ? ` (${formatScore(selectedRestaurant.bestDishScore)})`
-              : ''}
-          </p>
-          {selectedRestaurant.direccion_texto ? (
-            <p>{formatShortAddress(selectedRestaurant.direccion_texto)}</p>
-          ) : null}
-          <div className="chip-row">
-            {PIN_STYLES.map((style) => (
+      <div className={`map-stage${isFullscreen ? ' map-stage--fullscreen' : ''}`}>
+        <div className="map-stage__canvas">
+          <MapView
+            center={viewportRequest.center}
+            className="map-screen__map"
+            emptyDescription="No hay restaurantes en esta zona con los filtros activos."
+            emptyTitle="Sin restaurantes visibles"
+            markers={restaurantsForMap}
+            onLongPress={(location) => {
+              setDraftLocation(location)
+              setSelectedRestaurantId('')
+            }}
+            onPopupAction={openRestaurantDetail}
+            onSelectMarker={(restaurantId) => {
+              setDraftLocation(null)
+              setSelectedRestaurantId(restaurantId)
+            }}
+            onViewportChange={handleViewportChange}
+            pinStyle={defaultPinStyle}
+            popupMarkerId={selectedRestaurantId}
+            selectedMarkerId={selectedRestaurantId}
+            showTopline={false}
+            tempMarker={
+              draftLocation
+                ? {
+                    ...draftLocation,
+                    nombre: 'Nueva ubicación',
+                    categoryIcon: '📍',
+                    score: null,
+                  }
+                : null
+            }
+            viewportAnimation={viewportRequest.animation}
+            viewportKey={viewportRequest.key}
+            zoom={viewportRequest.zoom}
+          >
+            <div className="map-screen__overlay map-screen__overlay--top">
+              <span className="map-counter-chip">
+                {visibleRestaurants.length} restaurantes en esta zona
+              </span>
               <button
-                key={style}
-                className={`chip${selectedRestaurant.pinStyle === style ? ' chip--active' : ''}`}
+                className="map-floating-button map-floating-button--top"
                 type="button"
-                onClick={() => setRestaurantPinStyle(selectedRestaurant.id, style)}
+                onClick={() => setIsFullscreen((current) => !current)}
               >
-                {style}
+                {isFullscreen ? '✕ Cerrar' : '⛶ Pantalla completa'}
               </button>
-            ))}
-          </div>
-          <div className="map-action-banner__actions">
+            </div>
+
             <button
-              className="pill-button"
-              type="button"
-              onClick={() => clearRestaurantPinStyle(selectedRestaurant.id)}
-              disabled={!restaurantPinStyleOverrides[selectedRestaurant.id]}
-            >
-              Quitar override
-            </button>
-            <button
-              className="pill-button"
-              type="button"
-              onClick={() =>
-                onOpenEntity?.({ type: 'restaurant', id: selectedRestaurant.id })
-              }
-            >
-              Ver detalle
-            </button>
-            <button
-              className="primary-button"
+              className="map-floating-button map-floating-button--location"
               type="button"
               onClick={() => {
-                if (selectedRestaurant.mapsUrl) {
-                  window.open(selectedRestaurant.mapsUrl, '_blank', 'noreferrer')
-                }
+                hasUserInteractedRef.current = true
+                requestViewport(userPosition, 15, 'fly', 'gps-button')
               }}
             >
-              🗺 Cómo llegar
+              📍 Mi ubicación
             </button>
-          </div>
-        </article>
-      ) : null}
 
-      <SectionHeader
-        title="Pins previstos con datos reales"
-        actionLabel="Ver lista"
-        onAction={() => onNavigate?.('lists')}
-      />
-      <div className="list-stack">
-        {restaurants.map((restaurant) => (
-          <button
-            key={restaurant.id}
-            className="surface-card surface-card--button"
-            type="button"
-            onClick={() => onOpenEntity?.({ type: 'restaurant', id: restaurant.id })}
+            {!hasSeenOnboarding ? (
+              <div className="map-onboarding-tip" role="status">
+                <span>💡 Mantén pulsado el mapa para añadir un restaurante</span>
+                <button
+                  type="button"
+                  onClick={() => setHasSeenOnboarding(true)}
+                  aria-label="Cerrar ayuda del mapa"
+                >
+                  ✕
+                </button>
+              </div>
+            ) : null}
+          </MapView>
+
+          {draftLocation ? (
+            <div className="map-draft-sheet">
+              <div>
+                <strong>Nuevo restaurante listo</strong>
+                <p>La ubicación deliberada ya está fijada en el mapa.</p>
+              </div>
+              <div className="map-action-banner__actions">
+                <button
+                  className="pill-button"
+                  type="button"
+                  onClick={() => setDraftLocation(null)}
+                >
+                  Cancelar
+                </button>
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={() => onCreateRestaurantAtLocation?.(draftLocation)}
+                >
+                  Crear restaurante aquí
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {selectedRestaurant ? (
+            <>
+              <button
+                className="map-sheet-backdrop"
+                type="button"
+                aria-label="Cerrar ficha del restaurante"
+                onClick={() => setSelectedRestaurantId('')}
+              />
+              <article
+                className={`map-detail-sheet${
+                  isListExpanded ? ' map-detail-sheet--above-expanded-list' : ''
+                }`}
+              >
+                <button
+                  className="map-sheet-handle"
+                  type="button"
+                  aria-label="Deslizar para cerrar ficha"
+                  onPointerDown={handleDetailSheetPointerDown}
+                  onPointerUp={handleDetailSheetPointerUp}
+                >
+                  <span />
+                </button>
+                <div className="map-detail-sheet__content">
+                  <div className="map-detail-sheet__header">
+                    <strong>{selectedRestaurant.nombre}</strong>
+                  </div>
+                  <div className="map-detail-sheet__meta">
+                    <span
+                      className={`ranking-card__score ranking-card__score--${getScoreTone(
+                        selectedRestaurant.restaurant_score,
+                      )}`}
+                    >
+                      {formatScore(selectedRestaurant.restaurant_score)}
+                    </span>
+                    <span>{selectedRestaurant.total_entries} platos</span>
+                  </div>
+                  <p>{selectedRestaurant.distanceFromUserLabel}</p>
+                  <p>Mejor plato: {selectedRestaurant.bestDishName}</p>
+                  <div className="map-detail-sheet__actions">
+                    <button
+                      className="pill-button"
+                      type="button"
+                      onClick={() => openRestaurantDetail(selectedRestaurant.id)}
+                    >
+                      Ver detalle
+                    </button>
+                    <button
+                      className="primary-button"
+                      type="button"
+                      onClick={() => {
+                        if (selectedRestaurant.directionsUrl) {
+                          window.open(
+                            selectedRestaurant.directionsUrl,
+                            '_blank',
+                            'noreferrer',
+                          )
+                        }
+                      }}
+                    >
+                      🗺 Cómo llegar
+                    </button>
+                  </div>
+                </div>
+              </article>
+            </>
+          ) : null}
+
+          <section
+            className={`map-list-sheet${isListExpanded ? ' map-list-sheet--expanded' : ''}`}
+            aria-label="Lista de restaurantes del mapa"
           >
-            <strong>{restaurant.nombre}</strong>
-            <p>
-              {formatShortAddress(restaurant.direccion_texto)} •{' '}
-              {formatScore(restaurant.restaurant_score)} • {restaurant.total_entries} platos
-            </p>
-          </button>
-        ))}
+            <button
+              className="map-sheet-handle map-sheet-handle--list"
+              type="button"
+              aria-expanded={isListExpanded}
+              aria-label={
+                isListExpanded
+                  ? 'Contraer lista de restaurantes'
+                  : 'Expandir lista de restaurantes'
+              }
+              onPointerDown={handleListSheetHandlePointerDown}
+              onPointerUp={handleListSheetHandlePointerUp}
+            >
+              <span />
+            </button>
+
+            {!isListExpanded ? (
+              <div className="map-list-sheet__preview">
+                {previewRestaurants.length > 0 ? (
+                  previewRestaurants.map((restaurant) => (
+                    <button
+                      key={restaurant.id}
+                      className="map-list-card"
+                      type="button"
+                      onClick={() => {
+                        setSelectedRestaurantId(restaurant.id)
+                        requestViewport(
+                          {
+                            lat: Number(restaurant.lat),
+                            lng: Number(restaurant.lng),
+                          },
+                          viewportState.zoom,
+                          'fly',
+                          `restaurant:${restaurant.id}`,
+                        )
+                      }}
+                    >
+                      <div>
+                        <strong>{restaurant.nombre}</strong>
+                        <p>{formatStreetAddress(restaurant.direccion_texto)}</p>
+                      </div>
+                      <div className="map-list-card__side">
+                        <span
+                          className={`ranking-card__score ranking-card__score--${getScoreTone(
+                            restaurant.restaurant_score,
+                          )}`}
+                        >
+                          {formatScore(restaurant.restaurant_score)}
+                        </span>
+                        <span>{formatDistance(restaurant.distanceFromCenterMeters)}</span>
+                      </div>
+                    </button>
+                  ))
+                ) : (
+                  <article className="map-list-empty">
+                    <strong>Sin restaurantes en esta zona</strong>
+                    <p>Ajusta filtros o mueve el mapa para descubrir más opciones.</p>
+                  </article>
+                )}
+              </div>
+            ) : (
+              <div className="map-list-sheet__content">
+                <div className="map-list-section">
+                  <div className="map-list-section__header">
+                    <strong>Restaurantes que ves en el mapa</strong>
+                    <span>{visibleRestaurants.length}</span>
+                  </div>
+                  {visibleRestaurants.length > 0 ? (
+                    visibleRestaurants.map((restaurant) => (
+                      <button
+                        key={restaurant.id}
+                        className="map-list-card"
+                        type="button"
+                        onClick={() => {
+                          setSelectedRestaurantId(restaurant.id)
+                          requestViewport(
+                            {
+                              lat: Number(restaurant.lat),
+                              lng: Number(restaurant.lng),
+                            },
+                            viewportState.zoom,
+                            'fly',
+                            `restaurant:${restaurant.id}`,
+                          )
+                        }}
+                      >
+                        <div>
+                          <strong>{restaurant.nombre}</strong>
+                          <p>{formatStreetAddress(restaurant.direccion_texto)}</p>
+                        </div>
+                        <div className="map-list-card__side">
+                          <span
+                            className={`ranking-card__score ranking-card__score--${getScoreTone(
+                              restaurant.restaurant_score,
+                            )}`}
+                          >
+                            {formatScore(restaurant.restaurant_score)}
+                          </span>
+                          <span>{formatDistance(restaurant.distanceFromCenterMeters)}</span>
+                        </div>
+                      </button>
+                    ))
+                  ) : (
+                    <article className="map-list-empty">
+                      <strong>Ahora mismo no ves restaurantes en el encuadre</strong>
+                      <p>Mueve el mapa o amplía el radio activo para traer resultados.</p>
+                    </article>
+                  )}
+                </div>
+
+                <div className="map-list-section">
+                  <div className="map-list-section__header">
+                    <strong>Otros restaurantes cerca</strong>
+                    <span>{otherNearbyRestaurants.length}</span>
+                  </div>
+                  {otherNearbyRestaurants.length > 0 ? (
+                    otherNearbyRestaurants.map((restaurant) => (
+                      <button
+                        key={restaurant.id}
+                        className="map-list-card"
+                        type="button"
+                        onClick={() => {
+                          setSelectedRestaurantId(restaurant.id)
+                          requestViewport(
+                            {
+                              lat: Number(restaurant.lat),
+                              lng: Number(restaurant.lng),
+                            },
+                            viewportState.zoom,
+                            'fly',
+                            `restaurant:${restaurant.id}`,
+                          )
+                        }}
+                      >
+                        <div>
+                          <strong>{restaurant.nombre}</strong>
+                          <p>{formatStreetAddress(restaurant.direccion_texto)}</p>
+                        </div>
+                        <div className="map-list-card__side">
+                          <span
+                            className={`ranking-card__score ranking-card__score--${getScoreTone(
+                              restaurant.restaurant_score,
+                            )}`}
+                          >
+                            {formatScore(restaurant.restaurant_score)}
+                          </span>
+                          <span>{formatDistance(restaurant.distanceFromCenterMeters)}</span>
+                        </div>
+                      </button>
+                    ))
+                  ) : (
+                    <article className="map-list-empty">
+                      <strong>No hay otros restaurantes cercanos</strong>
+                      <p>Todo lo disponible con estos filtros ya está dentro del mapa visible.</p>
+                    </article>
+                  )}
+                </div>
+              </div>
+            )}
+          </section>
+        </div>
       </div>
     </section>
   )

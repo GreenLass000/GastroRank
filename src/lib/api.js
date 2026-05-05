@@ -5,6 +5,39 @@ function buildUrl(pathname) {
   return API_BASE_URL ? `${API_BASE_URL}${pathname}` : pathname
 }
 
+function buildQueryString(params = {}) {
+  const searchParams = new URLSearchParams()
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === null || value === undefined) {
+      return
+    }
+
+    if (Array.isArray(value)) {
+      if (value.length === 0) {
+        return
+      }
+
+      searchParams.set(key, JSON.stringify(value))
+      return
+    }
+
+    if (typeof value === 'object') {
+      searchParams.set(key, JSON.stringify(value))
+      return
+    }
+
+    if (value === '') {
+      return
+    }
+
+    searchParams.set(key, String(value))
+  })
+
+  const serialized = searchParams.toString()
+  return serialized ? `?${serialized}` : ''
+}
+
 async function fetchJson(pathname, { timeoutMs = 6000 } = {}) {
   return requestJson(pathname, {
     method: 'GET',
@@ -46,6 +79,179 @@ async function requestJson(pathname, { body, method, timeoutMs = 6000 } = {}) {
 
 export function fetchBootstrapData() {
   return fetchJson('/api/bootstrap')
+}
+
+export function fetchFollows({ userId, currentUserId, viewerUserId } = {}) {
+  return fetchJson(
+    `/api/follows${buildQueryString({
+      user_id: userId,
+      current_user_id: currentUserId,
+      viewer_user_id: viewerUserId,
+    })}`,
+  )
+}
+
+export function createFollow(payload) {
+  return requestJson('/api/follows', {
+    method: 'POST',
+    body: payload,
+    timeoutMs: 15000,
+  })
+}
+
+export function deleteFollow(followedUserId, { userId, currentUserId, viewerUserId } = {}) {
+  return requestJson(
+    `/api/follows/${encodeURIComponent(followedUserId)}${buildQueryString({
+      user_id: userId,
+      current_user_id: currentUserId,
+      viewer_user_id: viewerUserId,
+    })}`,
+    {
+      method: 'DELETE',
+      timeoutMs: 15000,
+    },
+  )
+}
+
+export function fetchCommunityFeed({
+  userId,
+  currentUserId,
+  viewerUserId,
+  tab,
+  page,
+  pageSize,
+  filters,
+} = {}) {
+  return fetchJson(
+    `/api/community/feed${buildQueryString({
+      user_id: userId,
+      current_user_id: currentUserId,
+      viewer_user_id: viewerUserId,
+      tab,
+      page,
+      page_size: pageSize,
+      filters,
+    })}`,
+    {
+      timeoutMs: 15000,
+    },
+  )
+}
+
+export function createReaction(payload) {
+  return requestJson('/api/reactions', {
+    method: 'POST',
+    body: payload,
+    timeoutMs: 15000,
+  })
+}
+
+export function deleteReaction(reactionId) {
+  return requestJson(`/api/reactions/${encodeURIComponent(reactionId)}`, {
+    method: 'DELETE',
+    timeoutMs: 15000,
+  })
+}
+
+export function fetchComments(entryId) {
+  return fetchJson(`/api/comments/${encodeURIComponent(entryId)}`, {
+    timeoutMs: 15000,
+  })
+}
+
+export function createComment(payload) {
+  return requestJson('/api/comments', {
+    method: 'POST',
+    body: payload,
+    timeoutMs: 15000,
+  })
+}
+
+export function fetchInspirationLists({ userId, currentUserId, viewerUserId } = {}) {
+  return fetchJson(
+    `/api/inspiration-lists${buildQueryString({
+      user_id: userId,
+      current_user_id: currentUserId,
+      viewer_user_id: viewerUserId,
+    })}`,
+    {
+      timeoutMs: 15000,
+    },
+  )
+}
+
+export function createInspirationList(payload) {
+  return requestJson('/api/inspiration-lists', {
+    method: 'POST',
+    body: payload,
+    timeoutMs: 15000,
+  })
+}
+
+export function createInspirationListItem(payload) {
+  return requestJson('/api/inspiration-list-items', {
+    method: 'POST',
+    body: payload,
+    timeoutMs: 15000,
+  })
+}
+
+export function updateInspirationListItem(itemId, payload) {
+  return requestJson(`/api/inspiration-list-items/${encodeURIComponent(itemId)}`, {
+    method: 'PUT',
+    body: payload,
+    timeoutMs: 15000,
+  })
+}
+
+export function createRecommendation(payload) {
+  return requestJson('/api/recommendations', {
+    method: 'POST',
+    body: payload,
+    timeoutMs: 15000,
+  })
+}
+
+export function updateRecommendation(recommendationId, payload = {}) {
+  return requestJson(`/api/recommendations/${encodeURIComponent(recommendationId)}`, {
+    method: 'PUT',
+    body: payload,
+    timeoutMs: 15000,
+  })
+}
+
+export function fetchRecommendations({ userId, currentUserId, viewerUserId } = {}) {
+  return fetchJson(
+    `/api/recommendations${buildQueryString({
+      user_id: userId,
+      current_user_id: currentUserId,
+      viewer_user_id: viewerUserId,
+    })}`,
+    {
+      timeoutMs: 15000,
+    },
+  )
+}
+
+export function fetchAchievements({ userId, currentUserId, viewerUserId } = {}) {
+  return fetchJson(
+    `/api/achievements${buildQueryString({
+      user_id: userId,
+      current_user_id: currentUserId,
+      viewer_user_id: viewerUserId,
+    })}`,
+    {
+      timeoutMs: 15000,
+    },
+  )
+}
+
+export function createAchievement(payload) {
+  return requestJson('/api/achievements', {
+    method: 'POST',
+    body: payload,
+    timeoutMs: 15000,
+  })
 }
 
 export function createRestaurant(payload) {
