@@ -83,6 +83,7 @@ export function validateUserPayload(payload) {
 
   return {
     nombre,
+    bio: asTrimmedString(payload.bio),
     avatar_url: asTrimmedString(payload.avatar_url),
   }
 }

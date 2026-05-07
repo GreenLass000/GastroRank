@@ -1,5 +1,6 @@
 export const APP_NAME = 'Ranking Gastronómico'
 export const STORAGE_KEYS = {
+  authToken: 'ranking-gastronomico:auth-token:v1',
   filters: 'ranking-gastronomico:filters:v1',
   defaultPinStyle: 'ranking-gastronomico:pin-style:v2',
   restaurantPinStyleOverrides: 'ranking-gastronomico:pin-style-overrides:v1',

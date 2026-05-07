@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { createSeedData } from '../data/seed.js'
 import { AppStateContext } from '../context/appStateContext.js'
 import { getAchievementTitle } from '../lib/achievements.js'
 import {
+  authLogin as authLoginRequest,
+  authLogout as authLogoutRequest,
+  authMe as authMeRequest,
+  authRegister as authRegisterRequest,
   createAchievement as createAchievementRequest,
   createCategory as createCategoryRequest,
   createComment as createCommentRequest,
@@ -23,6 +26,7 @@ import {
   fetchFollows as fetchFollowsRequest,
   fetchInspirationLists as fetchInspirationListsRequest,
   fetchRecommendations as fetchRecommendationsRequest,
+  updatePassword as updatePasswordRequest,
   updateCategory as updateCategoryRequest,
   updateAchievement as updateAchievementRequest,
   updateDishEntry as updateDishEntryRequest,
@@ -150,17 +154,16 @@ function getTopEntryByCategory(entries) {
   )
 }
 
-function hydrateState() {
-  const seed = createSeedData()
-  const dishEntries = seed.dishEntries.map((entry) => ({
-    ...entry,
-    puntuacion_general: calculateGeneralScore(entry),
-  }))
-
+function createEmptyAppData() {
   return {
-    ...seed,
-    dishEntries,
-    restaurants: enrichRestaurants(seed.restaurants, dishEntries),
+    users: [],
+    groups: [],
+    groupMembers: [],
+    restaurants: [],
+    categories: [],
+    dishTypes: [],
+    dishEntries: [],
+    publicShareTokens: [],
     follows: [],
     reactions: [],
     comments: [],
@@ -380,8 +383,17 @@ function buildHomeNearbySection({ origin, restaurants }) {
   }
 }
 
-function buildDerivedState(state, filters, filterOrigin) {
-  const currentUser = state.users[0]
+function buildDerivedState(state, filters, filterOrigin, sessionUser = null) {
+  const baseCurrentUser = sessionUser?.id
+    ? state.users.find((user) => user.id === sessionUser.id) ?? null
+    : state.users[0] ?? null
+  const currentUser =
+    baseCurrentUser || sessionUser
+      ? {
+          ...(baseCurrentUser ?? {}),
+          ...(sessionUser ?? {}),
+        }
+      : null
 
   if (!currentUser) {
     return {
@@ -620,6 +632,19 @@ function normalizePinStyle(style) {
   return PIN_STYLES.includes(style) ? style : DEFAULT_PIN_STYLE
 }
 
+function readStoredAuthToken() {
+  return window.localStorage.getItem(STORAGE_KEYS.authToken) ?? ''
+}
+
+function storeAuthToken(token) {
+  if (!token) {
+    window.localStorage.removeItem(STORAGE_KEYS.authToken)
+    return
+  }
+
+  window.localStorage.setItem(STORAGE_KEYS.authToken, token)
+}
+
 function normalizePinStyleOverrides(overrides) {
   if (!overrides || typeof overrides !== 'object') {
     return {}
@@ -633,7 +658,9 @@ function normalizePinStyleOverrides(overrides) {
 }
 
 export function AppStateProvider({ children }) {
-  const [state, setState] = useState(hydrateState)
+  const [state, setState] = useState(createEmptyAppData)
+  const [authChecked, setAuthChecked] = useState(false)
+  const [sessionUser, setSessionUser] = useState(null)
   const [activeFilters, setActiveFilters] = usePersistentState(
     STORAGE_KEYS.filters,
     DEFAULT_FILTERS,
@@ -661,8 +688,8 @@ export function AppStateProvider({ children }) {
     achievements: false,
   })
   const derivedState = useMemo(
-    () => buildDerivedState(state, activeFilters, filterOrigin),
-    [activeFilters, filterOrigin, state],
+    () => buildDerivedState(state, activeFilters, filterOrigin, sessionUser),
+    [activeFilters, filterOrigin, sessionUser, state],
   )
 
   function clearToast() {
@@ -1098,7 +1125,12 @@ export function AppStateProvider({ children }) {
       categoryWinsCount: getTopEntryByCategory(publicEntries).filter(
         (entry) => entry?.created_by_user_id === currentUserId,
       ).length,
-      weeklyStreak: buildDerivedState(nextState, activeFilters, filterOrigin).weeklyStreak,
+      weeklyStreak: buildDerivedState(
+        nextState,
+        activeFilters,
+        filterOrigin,
+        sessionUser,
+      ).weeklyStreak,
     }
     const unlockedBadgeTypes = new Set(
       (nextState.achievements ?? [])
@@ -1347,6 +1379,100 @@ export function AppStateProvider({ children }) {
       ...current,
       users: replaceRecordById(current.users, response.user),
     }))
+    setSessionUser((current) =>
+      current?.id === response.user.id ? { ...current, ...response.user } : current,
+    )
+    setToast({ message: 'Guardado ✅', tone: 'success' })
+    return response
+  }
+
+  async function bootstrapApp() {
+    const remoteData = await fetchBootstrapData()
+    setState(hydrateStateFromData(remoteData))
+    setDataSource('api')
+    setLoadError('')
+    return remoteData
+  }
+
+  async function completeAuthSession(authResponse) {
+    if (!authResponse?.token || !authResponse?.user) {
+      throw new Error('La autenticación no devolvió una sesión válida.')
+    }
+
+    storeAuthToken(authResponse.token)
+    setSessionUser(authResponse.user)
+    await bootstrapApp()
+    setAuthChecked(true)
+    return authResponse
+  }
+
+  async function login(identifier, password) {
+    setIsLoading(true)
+
+    try {
+      return await completeAuthSession(
+        await authLoginRequest({
+          identifier,
+          password,
+        }),
+      )
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  async function register(nombre, email, password) {
+    setIsLoading(true)
+
+    try {
+      return await completeAuthSession(
+        await authRegisterRequest({
+          nombre,
+          email,
+          password,
+        }),
+      )
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  async function logout() {
+    try {
+      await authLogoutRequest()
+    } catch {
+      // Logout is client-side for this stateless session.
+    }
+
+    storeAuthToken('')
+    setSessionUser(null)
+    setState(createEmptyAppData())
+    setSocialLoadState({
+      follows: false,
+      inspirationLists: false,
+      recommendations: false,
+      achievements: false,
+    })
+    setLoadError('')
+    setDataSource('api')
+    setToast({ message: '', tone: 'success' })
+    setAuthChecked(true)
+  }
+
+  async function changePassword(payload) {
+    const response = await updatePasswordRequest(payload)
+
+    if (!response?.user) {
+      throw new Error('La API no confirmó el cambio de contraseña.')
+    }
+
+    setSessionUser((current) =>
+      current?.id === response.user.id ? { ...current, ...response.user } : current,
+    )
+    setState((current) => ({
+      ...current,
+      users: replaceRecordById(current.users, response.user),
+    }))
     setToast({ message: 'Guardado ✅', tone: 'success' })
     return response
   }
@@ -1354,28 +1480,49 @@ export function AppStateProvider({ children }) {
   useEffect(() => {
     let cancelled = false
 
-    async function loadRemoteState() {
+    async function initializeSession() {
+      const storedToken = readStoredAuthToken()
+
+      if (!storedToken) {
+        setState(createEmptyAppData())
+        setSessionUser(null)
+        setDataSource('api')
+        setLoadError('')
+        setAuthChecked(true)
+        setIsLoading(false)
+        return
+      }
+
       try {
         setIsLoading(true)
-        const remoteData = await fetchBootstrapData()
+        const response = await authMeRequest(storedToken)
 
         if (cancelled) {
           return
         }
 
-        setState(hydrateStateFromData(remoteData))
-        setDataSource('api')
-        setLoadError('')
+        setSessionUser(response.user)
+        await bootstrapApp()
+
+        if (cancelled) {
+          return
+        }
+
+        setAuthChecked(true)
       } catch (error) {
         if (cancelled) {
           return
         }
 
-        const reason =
-          error instanceof Error ? error.message : 'No se pudo conectar con la API.'
-        setState(hydrateState())
-        setDataSource('seed')
-        setLoadError(`Error al cargar ❌ — ${reason}. Se muestran datos locales de respaldo.`)
+        storeAuthToken('')
+        setSessionUser(null)
+        setState(createEmptyAppData())
+        setLoadError(
+          error instanceof Error
+            ? `Error al cargar ❌ — ${error.message}`
+            : 'Error al cargar ❌ — No se pudo validar la sesión.',
+        )
+        setAuthChecked(true)
       } finally {
         if (!cancelled) {
           setIsLoading(false)
@@ -1383,7 +1530,7 @@ export function AppStateProvider({ children }) {
       }
     }
 
-    loadRemoteState()
+    initializeSession()
 
     return () => {
       cancelled = true
@@ -1451,6 +1598,7 @@ export function AppStateProvider({ children }) {
       value={{
         ...state,
         ...derivedState,
+        authChecked,
         isLoading,
         loadError,
         dataSource,
@@ -1467,6 +1615,10 @@ export function AppStateProvider({ children }) {
         applyFilters,
         resetFilters,
         removeFilter,
+        login,
+        register,
+        logout,
+        changePassword,
         loadFollows,
         followUser,
         unfollowUser,
@@ -1516,6 +1668,12 @@ function hydrateStateFromData(rawData) {
 
   return {
     ...rawData,
+    users:
+      rawData.users?.map((user) => ({
+        ...user,
+        bio: user.bio ?? '',
+        avatar_url: user.avatar_url ?? '',
+      })) ?? [],
     dishEntries,
     restaurants: enrichRestaurants(rawData.restaurants ?? [], dishEntries),
     follows: rawData.follows ?? [],

@@ -1,4 +1,10 @@
-import { randomUUID } from 'node:crypto'
+import {
+  createHmac,
+  randomBytes,
+  randomUUID,
+  scryptSync,
+  timingSafeEqual,
+} from 'node:crypto'
 import http from 'node:http'
 import { and, asc, desc, eq } from 'drizzle-orm'
 import { ACHIEVEMENT_TYPES } from '../src/lib/achievements.js'
@@ -18,6 +24,8 @@ const HOST = process.env.HOST ?? '0.0.0.0'
 const MAX_REQUEST_BODY_BYTES = 80 * 1024 * 1024
 const RATE_LIMIT_WINDOW_MS = 60 * 1000
 const RATE_LIMIT_MAX_REQUESTS = 120
+const AUTH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30
+const JWT_SECRET = process.env.JWT_SECRET?.trim() || 'gastrorank-dev-secret-change-me'
 const requestBuckets = new Map()
 
 // ---------------------------------------------------------------------------
@@ -73,11 +81,107 @@ const FETCH = {
 function sendJson(response, statusCode, payload) {
   response.writeHead(statusCode, {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Content-Type': 'application/json; charset=utf-8',
   })
   response.end(JSON.stringify(payload))
+}
+
+function toBase64Url(value) {
+  return Buffer.from(value).toString('base64url')
+}
+
+function fromBase64Url(value) {
+  return Buffer.from(value, 'base64url').toString('utf8')
+}
+
+function createAuthToken(user) {
+  const header = toBase64Url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
+  const payload = toBase64Url(
+    JSON.stringify({
+      sub: user.id,
+      email: user.email ?? null,
+      exp: Math.floor(Date.now() / 1000) + AUTH_TOKEN_TTL_SECONDS,
+    }),
+  )
+  const signature = createHmac('sha256', JWT_SECRET)
+    .update(`${header}.${payload}`)
+    .digest('base64url')
+
+  return `${header}.${payload}.${signature}`
+}
+
+function verifyAuthToken(token) {
+  const [header, payload, signature] = String(token ?? '').split('.')
+
+  if (!header || !payload || !signature) {
+    throw new Error('Token inválido.')
+  }
+
+  const expectedSignature = createHmac('sha256', JWT_SECRET)
+    .update(`${header}.${payload}`)
+    .digest('base64url')
+
+  const signatureBuffer = Buffer.from(signature)
+  const expectedBuffer = Buffer.from(expectedSignature)
+
+  if (
+    signatureBuffer.length !== expectedBuffer.length ||
+    !timingSafeEqual(signatureBuffer, expectedBuffer)
+  ) {
+    throw new Error('Firma de token inválida.')
+  }
+
+  const decodedPayload = JSON.parse(fromBase64Url(payload))
+
+  if (
+    typeof decodedPayload.exp !== 'number' ||
+    decodedPayload.exp <= Math.floor(Date.now() / 1000)
+  ) {
+    throw new Error('El token ha caducado.')
+  }
+
+  if (!decodedPayload.sub) {
+    throw new Error('El token no identifica a ningún usuario.')
+  }
+
+  return decodedPayload
+}
+
+function hashPassword(password) {
+  const salt = randomBytes(16)
+  const digest = scryptSync(password, salt, 64)
+  return `scrypt$${salt.toString('base64url')}$${digest.toString('base64url')}`
+}
+
+function verifyPassword(password, passwordHash) {
+  const [algorithm, saltBase64, digestBase64] = String(passwordHash ?? '').split('$')
+
+  if (algorithm !== 'scrypt' || !saltBase64 || !digestBase64) {
+    return false
+  }
+
+  const salt = Buffer.from(saltBase64, 'base64url')
+  const expectedDigest = Buffer.from(digestBase64, 'base64url')
+  const actualDigest = scryptSync(password, salt, expectedDigest.length)
+
+  return timingSafeEqual(actualDigest, expectedDigest)
+}
+
+function serializeUser(user, { includeEmail = false } = {}) {
+  if (!user) {
+    return null
+  }
+
+  return {
+    id: user.id,
+    nombre: user.nombre,
+    bio: user.bio ?? '',
+    avatar_url: user.avatar_url ?? '',
+    created_at: user.created_at,
+    ...(includeEmail ? { email: user.email ?? '' } : {}),
+  }
 }
 
 function getClientIp(request) {
@@ -117,7 +221,7 @@ function enforceRateLimit(request, response) {
 
   response.writeHead(429, {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Content-Type': 'application/json; charset=utf-8',
     'Retry-After': String(Math.ceil(RATE_LIMIT_WINDOW_MS / 1000)),
@@ -236,11 +340,86 @@ function getOptionalString(value) {
   return normalized || null
 }
 
-function getCurrentUserIdFromSearchParams(searchParams) {
+function getRequiredEmail(value) {
+  const email = getRequiredString(value, 'el email').toLowerCase()
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new Error('El email no es válido.')
+  }
+
+  return email
+}
+
+function normalizeAuthIdentifier(value) {
+  return getRequiredString(value, 'el usuario o correo').toLowerCase()
+}
+
+function getRequiredPassword(value, label = 'la contraseña') {
+  const password = getRequiredString(value, label)
+
+  if (password.length < 8) {
+    throw new Error('La contraseña debe tener al menos 8 caracteres.')
+  }
+
+  return password
+}
+
+function readBearerToken(request) {
+  const authorization = String(request.headers.authorization ?? '')
+
+  if (!authorization.startsWith('Bearer ')) {
+    return ''
+  }
+
+  return authorization.slice('Bearer '.length).trim()
+}
+
+async function requireAuth(request) {
+  const token = readBearerToken(request)
+
+  if (!token) {
+    const error = new Error('No autorizado.')
+    error.statusCode = 401
+    throw error
+  }
+
+  let session
+
+  try {
+    session = verifyAuthToken(token)
+  } catch (error) {
+    const authError = new Error(
+      error instanceof Error ? error.message : 'Token inválido.',
+    )
+    authError.statusCode = 401
+    throw authError
+  }
+
+  const users = await FETCH.users()
+  const user = users.find((candidate) => candidate.id === session.sub)
+
+  if (!user) {
+    const error = new Error('La sesión ya no es válida.')
+    error.statusCode = 401
+    throw error
+  }
+
+  return user
+}
+
+function getAuthenticatedUserId(user) {
+  return getRequiredString(typeof user === 'string' ? user : user?.id, 'el usuario autenticado')
+}
+
+function getCurrentUserIdFromSearchParams(searchParams, authenticatedUserId = '') {
   const userId =
     searchParams.get('user_id') ??
     searchParams.get('current_user_id') ??
     searchParams.get('viewer_user_id')
+
+  if (!userId && authenticatedUserId) {
+    return authenticatedUserId
+  }
 
   return getRequiredString(userId, 'el user_id actual')
 }
@@ -390,7 +569,7 @@ function calculateWeeklyStreak(dishEntries, userId) {
 }
 
 function buildUserLookup(users) {
-  return new Map(users.map((u) => [u.id, u]))
+  return new Map(users.map((u) => [u.id, serializeUser(u)]))
 }
 
 function buildReactionSummary(reactions) {
@@ -515,6 +694,86 @@ async function generateUniquePublicShareToken() {
 // CRUD operations (Drizzle)
 // ---------------------------------------------------------------------------
 
+async function registerUser(payload) {
+  const nombre = getRequiredString(payload.nombre, 'el usuario')
+  const email = getRequiredEmail(payload.email)
+  const password = getRequiredPassword(payload.password)
+  const users = await FETCH.users()
+  const normalizedUserName = nombre.toLowerCase()
+
+  if (users.some((user) => String(user.email ?? '').toLowerCase() === email)) {
+    throw new Error('Ya existe una cuenta con ese email.')
+  }
+
+  if (users.some((user) => String(user.nombre ?? '').trim().toLowerCase() === normalizedUserName)) {
+    throw new Error('Ya existe una cuenta con ese usuario.')
+  }
+
+  const record = {
+    id: randomUUID(),
+    nombre,
+    email,
+    password_hash: hashPassword(password),
+    bio: '',
+    avatar_url: '',
+    created_at: new Date().toISOString(),
+  }
+
+  await db.insert(schema.users).values(record)
+
+  return {
+    user: serializeUser(record, { includeEmail: true }),
+    token: createAuthToken(record),
+  }
+}
+
+async function loginUser(payload) {
+  const identifier = normalizeAuthIdentifier(payload.identifier ?? payload.email)
+  const password = getRequiredPassword(payload.password)
+  const users = await FETCH.users()
+  const user = users.find((candidate) => {
+    const candidateEmail = String(candidate.email ?? '').toLowerCase()
+    const candidateUserName = String(candidate.nombre ?? '').trim().toLowerCase()
+    return candidateEmail === identifier || candidateUserName === identifier
+  })
+
+  if (!user?.password_hash || !verifyPassword(password, user.password_hash)) {
+    const error = new Error('Usuario/correo o contraseña incorrectos.')
+    error.statusCode = 401
+    throw error
+  }
+
+  return {
+    user: serializeUser(user, { includeEmail: true }),
+    token: createAuthToken(user),
+  }
+}
+
+async function updatePasswordForUser(userId, payload) {
+  const currentPassword = getRequiredPassword(payload.currentPassword, 'la contraseña actual')
+  const newPassword = getRequiredPassword(payload.newPassword, 'la nueva contraseña')
+  const users = await FETCH.users()
+  const currentUser = ensureRecordExists(users, userId, 'el usuario autenticado')
+
+  if (!currentUser.password_hash || !verifyPassword(currentPassword, currentUser.password_hash)) {
+    const error = new Error('La contraseña actual no coincide.')
+    error.statusCode = 401
+    throw error
+  }
+
+  if (currentPassword === newPassword) {
+    throw new Error('La nueva contraseña debe ser distinta de la actual.')
+  }
+
+  const [updated] = await db
+    .update(schema.users)
+    .set({ password_hash: hashPassword(newPassword) })
+    .where(eq(schema.users.id, userId))
+    .returning()
+
+  return serializeUser(updated ?? currentUser, { includeEmail: true })
+}
+
 async function createRestaurant(payload) {
   const restaurants = parseRestaurantRows(await FETCH.restaurants())
   const p = validateRestaurantPayload(payload, restaurants)
@@ -636,11 +895,12 @@ async function createDishEntry(payload) {
   const existing = await FETCH.dishEntries()
   const p = validateDishEntryPayload(payload, existing)
 
-  const { puntuacion_general: _computed, ...insertValues } = {
+  const insertValues = {
     id: randomUUID(),
     ...p,
     created_at: new Date().toISOString(),
   }
+  delete insertValues.puntuacion_general
 
   const [inserted] = await db
     .insert(schema.dishEntries)
@@ -655,16 +915,17 @@ async function createDishEntry(payload) {
 
 async function updateUser(userId, payload) {
   const users = await FETCH.users()
-  ensureRecordExists(users, userId, 'el usuario solicitado')
+  const current = ensureRecordExists(users, userId, 'el usuario solicitado')
   const p = validateUserPayload(payload)
+  const bio = getOptionalString(payload.bio) ?? current.bio ?? ''
 
   const [updated] = await db
     .update(schema.users)
-    .set({ nombre: p.nombre, avatar_url: p.avatar_url })
+    .set({ nombre: p.nombre, avatar_url: p.avatar_url, bio })
     .where(eq(schema.users.id, userId))
     .returning()
 
-  return updated
+  return serializeUser(updated, { includeEmail: true })
 }
 
 async function updateGroup(groupId, payload) {
@@ -864,8 +1125,8 @@ async function deleteFollow(currentUserId, followedUserId) {
   return { ok: true }
 }
 
-async function getCommunityFeed(searchParams) {
-  const currentUserId = getCurrentUserIdFromSearchParams(searchParams)
+async function getCommunityFeed(searchParams, authenticatedUserId) {
+  const currentUserId = getAuthenticatedUserId(authenticatedUserId)
   const tab = searchParams.get('tab') === 'amigos' ? 'amigos' : 'explorar'
   const page = Math.max(1, parseInteger(searchParams.get('page'), 1))
   const pageSize = Math.min(30, Math.max(1, parseInteger(searchParams.get('page_size'), 10)))
@@ -1076,7 +1337,7 @@ async function createComment(payload) {
 
   return {
     ...record,
-    user: ensureRecordExists(users, userId, 'el usuario del comentario'),
+    user: serializeUser(ensureRecordExists(users, userId, 'el usuario del comentario')),
   }
 }
 
@@ -1392,7 +1653,7 @@ async function loadBootstrapData({ includeSocial = false } = {}) {
   }
 
   return {
-    users,
+    users: users.map((user) => serializeUser(user)),
     groups,
     groupMembers,
     restaurants: parseRestaurantRows(restaurants),
@@ -1466,7 +1727,7 @@ async function loadPublicSharePayload(token) {
 // Route handlers
 // ---------------------------------------------------------------------------
 
-async function handleRoute(url, response) {
+async function handleRoute(url, response, authUser = null) {
   const { pathname, searchParams } = url
 
   if (pathname === '/api/health') {
@@ -1496,7 +1757,11 @@ async function handleRoute(url, response) {
   }
 
   if (pathname === '/api/community/feed') {
-    return sendJson(response, 200, await getCommunityFeed(searchParams))
+    return sendJson(
+      response,
+      200,
+      await getCommunityFeed(searchParams, getAuthenticatedUserId(authUser)),
+    )
   }
 
   if (pathname.startsWith('/api/comments/')) {
@@ -1528,7 +1793,12 @@ async function handleRoute(url, response) {
 
   if (routeKey in FETCH) {
     const rows = await FETCH[routeKey]()
-    const payload = routeKey === 'restaurants' ? parseRestaurantRows(rows) : rows
+    const payload =
+      routeKey === 'restaurants'
+        ? parseRestaurantRows(rows)
+        : routeKey === 'users'
+          ? rows.map((user) => serializeUser(user))
+          : rows
     return sendJson(response, 200, payload)
   }
 
@@ -1539,6 +1809,19 @@ async function handleRoute(url, response) {
 // HTTP server
 // ---------------------------------------------------------------------------
 
+function isPublicRoute(pathname) {
+  return (
+    pathname === '/api/health' ||
+    pathname === '/api/bootstrap' ||
+    pathname === '/api/auth/register' ||
+    pathname === '/api/auth/login' ||
+    pathname === '/api/auth/logout' ||
+    pathname === '/api/auth/me' ||
+    pathname === '/api/public-share' ||
+    pathname.startsWith('/api/public-share/')
+  )
+}
+
 const server = http.createServer(async (request, response) => {
   if (!request.url) {
     return sendJson(response, 400, { error: 'Petición inválida.' })
@@ -1547,7 +1830,7 @@ const server = http.createServer(async (request, response) => {
   if (request.method === 'OPTIONS') {
     response.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     })
     response.end()
@@ -1560,9 +1843,15 @@ const server = http.createServer(async (request, response) => {
 
   try {
     const url = new URL(request.url, `http://${request.headers.host}`)
+    const authUser = isPublicRoute(url.pathname) ? null : await requireAuth(request)
 
     if (request.method === 'GET') {
-      await handleRoute(url, response)
+      if (url.pathname === '/api/auth/me') {
+        sendJson(response, 200, { user: serializeUser(await requireAuth(request), { includeEmail: true }) })
+        return
+      }
+
+      await handleRoute(url, response, authUser)
       return
     }
 
@@ -1570,57 +1859,117 @@ const server = http.createServer(async (request, response) => {
       ensureJsonRequest(request)
     }
 
+    if (request.method === 'POST' && url.pathname === '/api/auth/register') {
+      const body = await readJsonBody(request)
+      sendJson(response, 201, await registerUser(body))
+      return
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/auth/login') {
+      const body = await readJsonBody(request)
+      sendJson(response, 200, await loginUser(body))
+      return
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/auth/logout') {
+      sendJson(response, 200, { ok: true })
+      return
+    }
+
     if (request.method === 'POST' && url.pathname === '/api/follows') {
       const body = await readJsonBody(request)
-      sendJson(response, 201, { follow: await createFollow(body) })
+      sendJson(response, 201, {
+        follow: await createFollow({
+          ...body,
+          follower_user_id: getAuthenticatedUserId(authUser),
+        }),
+      })
       return
     }
 
     if (request.method === 'POST' && url.pathname === '/api/restaurants') {
       const body = await readJsonBody(request)
-      sendJson(response, 201, { restaurant: await createRestaurant(body) })
+      sendJson(response, 201, {
+        restaurant: await createRestaurant({
+          ...body,
+          created_by_user_id: getAuthenticatedUserId(authUser),
+        }),
+      })
       return
     }
 
     if (request.method === 'POST' && url.pathname === '/api/groups') {
       const body = await readJsonBody(request)
-      sendJson(response, 201, await createGroup(body))
+      sendJson(response, 201, await createGroup({
+        ...body,
+        created_by_user_id: getAuthenticatedUserId(authUser),
+      }))
       return
     }
 
     if (request.method === 'POST' && url.pathname === '/api/categories') {
       const body = await readJsonBody(request)
-      sendJson(response, 201, { category: await createCategory(body) })
+      sendJson(response, 201, {
+        category: await createCategory({
+          ...body,
+          created_by_user_id: getAuthenticatedUserId(authUser),
+        }),
+      })
       return
     }
 
     if (request.method === 'POST' && url.pathname === '/api/dish-types') {
       const body = await readJsonBody(request)
-      sendJson(response, 201, { dishType: await createDishType(body) })
+      sendJson(response, 201, {
+        dishType: await createDishType({
+          ...body,
+          created_by_user_id: getAuthenticatedUserId(authUser),
+        }),
+      })
       return
     }
 
     if (request.method === 'POST' && url.pathname === '/api/dish-entries') {
       const body = await readJsonBody(request)
-      sendJson(response, 201, { dishEntry: await createDishEntry(body) })
+      sendJson(response, 201, {
+        dishEntry: await createDishEntry({
+          ...body,
+          created_by_user_id: getAuthenticatedUserId(authUser),
+        }),
+      })
       return
     }
 
     if (request.method === 'POST' && url.pathname === '/api/reactions') {
       const body = await readJsonBody(request)
-      sendJson(response, 201, { reaction: await addOrUpdateReaction(body) })
+      sendJson(response, 201, {
+        reaction: await addOrUpdateReaction({
+          ...body,
+          user_id: getAuthenticatedUserId(authUser),
+        }),
+      })
       return
     }
 
     if (request.method === 'POST' && url.pathname === '/api/comments') {
       const body = await readJsonBody(request)
-      sendJson(response, 201, { comment: await createComment(body) })
+      sendJson(response, 201, {
+        comment: await createComment({
+          ...body,
+          user_id: getAuthenticatedUserId(authUser),
+        }),
+      })
       return
     }
 
     if (request.method === 'POST' && url.pathname === '/api/inspiration-lists') {
       const body = await readJsonBody(request)
-      sendJson(response, 201, { inspirationList: await createInspirationList(body) })
+      sendJson(response, 201, {
+        inspirationList: await createInspirationList({
+          ...body,
+          user_id: getAuthenticatedUserId(authUser),
+        }),
+      })
       return
     }
 
@@ -1634,26 +1983,54 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === 'POST' && url.pathname === '/api/recommendations') {
       const body = await readJsonBody(request)
-      sendJson(response, 201, { recommendation: await createRecommendation(body) })
+      sendJson(response, 201, {
+        recommendation: await createRecommendation({
+          ...body,
+          from_user_id: getAuthenticatedUserId(authUser),
+        }),
+      })
       return
     }
 
     if (request.method === 'POST' && url.pathname === '/api/achievements') {
       const body = await readJsonBody(request)
-      sendJson(response, 201, { achievement: await createAchievement(body) })
+      sendJson(response, 201, {
+        achievement: await createAchievement({
+          ...body,
+          user_id: getAuthenticatedUserId(authUser),
+        }),
+      })
       return
     }
 
     if (request.method === 'POST' && url.pathname === '/api/public-share-tokens') {
       const body = await readJsonBody(request)
-      sendJson(response, 201, { shareToken: await createPublicShareToken(body) })
+      sendJson(response, 201, {
+        shareToken: await createPublicShareToken({
+          ...body,
+          created_by_user_id: getAuthenticatedUserId(authUser),
+        }),
+      })
       return
     }
 
     if (request.method === 'PUT' && url.pathname.startsWith('/api/users/')) {
       const body = await readJsonBody(request)
       const userId = decodeURIComponent(url.pathname.replace('/api/users/', ''))
+      if (userId !== getAuthenticatedUserId(authUser)) {
+        const error = new Error('No puedes editar otro perfil.')
+        error.statusCode = 403
+        throw error
+      }
       sendJson(response, 200, { user: await updateUser(userId, body) })
+      return
+    }
+
+    if (request.method === 'PUT' && url.pathname === '/api/auth/password') {
+      const body = await readJsonBody(request)
+      sendJson(response, 200, {
+        user: await updatePasswordForUser(getAuthenticatedUserId(authUser), body),
+      })
       return
     }
 
@@ -1723,8 +2100,11 @@ const server = http.createServer(async (request, response) => {
       const followedUserId = decodeURIComponent(
         url.pathname.replace('/api/follows/', ''),
       )
-      const currentUserId = getCurrentUserIdFromSearchParams(url.searchParams)
-      sendJson(response, 200, await deleteFollow(currentUserId, followedUserId))
+      sendJson(
+        response,
+        200,
+        await deleteFollow(getAuthenticatedUserId(authUser), followedUserId),
+      )
       return
     }
 
@@ -1736,7 +2116,7 @@ const server = http.createServer(async (request, response) => {
 
     return sendJson(response, 405, { error: 'Método no permitido.' })
   } catch (error) {
-    return sendJson(response, 500, {
+    return sendJson(response, error?.statusCode ?? 500, {
       error:
         error instanceof Error ? error.message : 'Error interno del servidor.',
     })

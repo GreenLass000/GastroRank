@@ -3,6 +3,9 @@
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   nombre TEXT NOT NULL,
+  email TEXT UNIQUE,
+  password_hash TEXT,
+  bio TEXT,
   avatar_url TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -260,7 +263,12 @@ SELECT
   ROUND(ea.media_entry::numeric, 3) AS media_entry,
   ea.votos,
   ROUND(ga.media_global::numeric, 3) AS media_global,
-  ROUND(((ea.media_entry * ea.votos) + (ga.media_global * 5.0)) / (ea.votos + 5.0), 3) AS score,
+  ROUND(
+    (
+      ((ea.media_entry * ea.votos) + (ga.media_global * 5.0)) / (ea.votos + 5.0)
+    )::numeric,
+    3
+  ) AS score,
   (
     SELECT de2.foto_url
     FROM dish_entries de2

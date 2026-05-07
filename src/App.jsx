@@ -14,6 +14,7 @@ import { fetchPublicShare } from './lib/api.js'
 import { NAV_ITEMS } from './lib/constants.js'
 import { useAppState } from './hooks/useAppState.js'
 import { HomeScreen } from './screens/HomeScreen.jsx'
+import { AuthScreen } from './screens/AuthScreen.jsx'
 import { ComunidadScreen } from './screens/ComunidadScreen.jsx'
 import { MapScreen } from './screens/MapScreen.jsx'
 import { ProfileScreen } from './screens/ProfileScreen.jsx'
@@ -80,11 +81,15 @@ function App() {
   const [sharePayload, setSharePayload] = useState(null)
   const [shareError, setShareError] = useState('')
   const [isShareLoading, setIsShareLoading] = useState(false)
-  const { isLoading, loadError, toast, clearToast } = useAppState()
+  const { authChecked, currentUser, isLoading, loadError, toast, clearToast } =
+    useAppState()
 
   const activeNavItem =
     NAV_ITEMS.find((item) => item.id === activeScreen) ?? NAV_ITEMS[0]
-  const showTopbar = true
+  const isPublicShareView = activeScreen === 'report' && Boolean(shareToken)
+  const requiresAuth = !isPublicShareView
+  const shouldShowAuthScreen = requiresAuth && authChecked && !currentUser
+  const showTopbar = isPublicShareView || Boolean(currentUser)
 
   function handleScreenChange(nextScreen) {
     const normalizedScreen = normalizeScreenId(nextScreen)
@@ -268,7 +273,7 @@ function App() {
       ) : null}
 
       <main className="screen-container">
-        {loadError ? (
+        {loadError && !shouldShowAuthScreen ? (
           <StatusBanner
             tone="error"
             title="Sin conexión"
@@ -282,10 +287,13 @@ function App() {
             detail={`Error al cargar ❌ — ${shareError}`}
           />
         ) : null}
-        {renderActiveScreen()}
+        {shouldShowAuthScreen ? <AuthScreen /> : null}
+        {(!requiresAuth || authChecked) && (!requiresAuth || currentUser)
+          ? renderActiveScreen()
+          : null}
       </main>
 
-      {!shareToken ? (
+      {!shareToken && currentUser ? (
         <>
           <FloatingActionButton
             label="Añadir plato rápido"
@@ -298,10 +306,12 @@ function App() {
           />
         </>
       ) : null}
-      {isLoading || isShareLoading ? <LoadingOverlay message="Cargando..." /> : null}
+      {(isLoading || isShareLoading || (requiresAuth && !authChecked)) ? (
+        <LoadingOverlay message="Cargando..." />
+      ) : null}
       <ToastCenter message={toast.message} tone={toast.tone} />
 
-      {isSearchOpen ? (
+      {isSearchOpen && currentUser ? (
         <ModalSheet title="Buscar" onClose={() => setIsSearchOpen(false)}>
           <GlobalSearchPanel
             onClose={() => setIsSearchOpen(false)}
@@ -310,7 +320,7 @@ function App() {
         </ModalSheet>
       ) : null}
 
-      {entityDetailTarget ? (
+      {entityDetailTarget && currentUser ? (
         <ModalSheet
           title="Detalle"
           onClose={() => {
@@ -325,7 +335,7 @@ function App() {
         </ModalSheet>
       ) : null}
 
-      {isDishWizardOpen ? (
+      {isDishWizardOpen && currentUser ? (
         <ModalSheet
           title="Añadir plato"
           onClose={() => {
@@ -344,7 +354,7 @@ function App() {
         </ModalSheet>
       ) : null}
 
-      {isRestaurantFormOpen ? (
+      {isRestaurantFormOpen && currentUser ? (
         <ModalSheet
           title="Nuevo restaurante"
           onClose={() => {

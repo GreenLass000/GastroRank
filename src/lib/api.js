@@ -45,7 +45,15 @@ async function fetchJson(pathname, { timeoutMs = 6000 } = {}) {
   })
 }
 
-async function requestJson(pathname, { body, method, timeoutMs = 6000 } = {}) {
+function authHeaders() {
+  const token = window.localStorage.getItem('ranking-gastronomico:auth-token:v1')
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+async function requestJson(
+  pathname,
+  { body, headers = {}, method, timeoutMs = 6000 } = {},
+) {
   const controller = new AbortController()
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs)
 
@@ -54,6 +62,8 @@ async function requestJson(pathname, { body, method, timeoutMs = 6000 } = {}) {
       method,
       headers: {
         'Content-Type': 'application/json',
+        ...authHeaders(),
+        ...headers,
       },
       body: body ? JSON.stringify(body) : undefined,
       signal: controller.signal,
@@ -83,6 +93,46 @@ export function fetchBootstrapData({ includeSocial = false } = {}) {
       include_social: includeSocial ? 1 : undefined,
     })}`,
   )
+}
+
+export function authRegister(payload) {
+  return requestJson('/api/auth/register', {
+    method: 'POST',
+    body: payload,
+    timeoutMs: 15000,
+  })
+}
+
+export function authLogin(payload) {
+  return requestJson('/api/auth/login', {
+    method: 'POST',
+    body: payload,
+    timeoutMs: 15000,
+  })
+}
+
+export function authLogout() {
+  return requestJson('/api/auth/logout', {
+    method: 'POST',
+    body: {},
+    timeoutMs: 10000,
+  })
+}
+
+export function authMe(token) {
+  return requestJson('/api/auth/me', {
+    method: 'GET',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    timeoutMs: 10000,
+  })
+}
+
+export function updatePassword(payload) {
+  return requestJson('/api/auth/password', {
+    method: 'PUT',
+    body: payload,
+    timeoutMs: 15000,
+  })
 }
 
 export function fetchFollows({ userId, currentUserId, viewerUserId } = {}) {

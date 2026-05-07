@@ -6,6 +6,7 @@ import { ImageInput } from './ImageInput.jsx'
 
 const INITIAL_PROFILE_FORM = {
   nombre: '',
+  bio: '',
   avatarMode: 'url',
   avatarUrlValue: '',
   avatarFileValue: '',
@@ -19,6 +20,7 @@ function buildInitialState(initialValues) {
   return {
     ...INITIAL_PROFILE_FORM,
     nombre: initialValues.nombre || '',
+    bio: initialValues.bio || '',
     avatarMode,
     avatarUrlValue: avatarMode === 'url' ? avatarValue : '',
     avatarFileValue: avatarMode === 'file' ? avatarValue : '',
@@ -46,6 +48,7 @@ export function ProfileForm({ initialValues, onCancel, onSaved }) {
     try {
       const payload = validateUserPayload({
         nombre: form.nombre,
+        bio: form.bio,
         avatar_url: normalizeImageUrl(currentAvatarValue),
       })
 
@@ -74,6 +77,19 @@ export function ProfileForm({ initialValues, onCancel, onSaved }) {
             setForm((current) => ({
               ...current,
               nombre: event.target.value,
+            }))
+          }
+        />
+      </label>
+
+      <label className="field">
+        <span>Bio</span>
+        <textarea
+          value={form.bio}
+          onChange={(event) =>
+            setForm((current) => ({
+              ...current,
+              bio: event.target.value,
             }))
           }
         />

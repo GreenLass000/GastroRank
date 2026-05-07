@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Source of Truth
-This repository is a Vite + React application with SQLite as the persistence layer for domain data. Frontend code lives in `src/`: `main.jsx` bootstraps the app, `App.jsx` is the current top-level entry, and shared styles start in `src/index.css` and `src/App.css`. Database artifacts live in `server/db/`, with schema files in `server/db/migrations/`, seed data in `server/db/seeds/`, and local runtime files in `server/db/data/`. Put imported assets in `src/assets/` and directly served files in `public/`. Project documentation is split between the repository root and `docs/`.
+This repository is a Vite + React application with PostgreSQL + Drizzle ORM as the active persistence layer for domain data. Frontend code lives in `src/`: `main.jsx` bootstraps the app, `App.jsx` is the current top-level entry, and shared styles start in `src/index.css` and `src/App.css`. Database artifacts live in `server/db/`, with the live schema in `server/db/schema.js` and bootstrap SQL in `server/db/init.postgres.sql`. Put imported assets in `src/assets/` and directly served files in `public/`. Project documentation is split between the repository root and `docs/`.
 
 ## Where To Look First
 - `TODO.md`: full product brief and final acceptance criteria
@@ -24,9 +24,12 @@ Current rediseño status for `Inicio`:
 
 Current next-step assumption:
 - start from `docs/CHECKPOINT.md`
-- if the environment has Node, run verification (`db:verify`, `lint`, `build`)
+- if the environment has Node, run verification (`lint`, `build`) and validate auth flows against PostgreSQL
 - otherwise limit the session to targeted fixes or visual corrections only
 - do not reopen broad home milestones unless the task is a targeted fix or visual correction
+- `docs/PLAN_COMPLETION.md`:
+  - `Fase 1`: cerrada en código
+  - siguiente bloque natural: `Fase 2`
 - Comunidad + Perfil:
   - `Fase 5`: closed in code
   - `Fase 6`: closed in code
@@ -37,8 +40,11 @@ Current next-step assumption:
 
 Current files that matter most for the next block:
 - `docs/CHECKPOINT.md`
+- `docs/PLAN_COMPLETION.md`
 - `server/app.js`
+- `server/db/schema.js`
 - `src/providers/AppStateProvider.jsx`
+- `src/screens/AuthScreen.jsx`
 - `src/screens/ComunidadScreen.jsx`
 - `src/lib/achievements.js`
 - `src/screens/ProfileScreen.jsx`

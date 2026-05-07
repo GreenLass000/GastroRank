@@ -3,11 +3,19 @@
 ## Fecha
 - 2026-04-11
 - 2026-05-05
+- 2026-05-07
 
 ## Estado general
 Continuidad recuperada sin `docs/CHECKLIST_TECNICO.md` disponible en el repo.
 
 Estado actual más relevante:
+
+- Fase 1 de `docs/PLAN_COMPLETION.md`: implementada en código
+- autenticación básica operativa con registro, login, `auth/me`, cambio de contraseña y logout sobre `server/app.js`
+- `AppStateProvider` ya no usa `state.users[0]` como sesión fuente; ahora valida token persistido y hace bootstrap tras autenticación
+- nueva pantalla `AuthScreen` añadida y `App.jsx` ya bloquea la app privada cuando no hay sesión
+- `ProfileScreen` ya expone bloque `Cuenta`, cambio de contraseña, cierre de sesión y métricas seguras sin `NaN`
+- esquema PostgreSQL y Drizzle actualizados con `email`, `password_hash` y `bio` en `users`
 
 - rediseño del modal `Añadir plato`: implementado en código según `docs/CAMBIOS_MODAL_ANADIR_PLATO.md`
 - rediseño de la pestaña `Rankings`: implementado en código según `docs/CAMBIOS_TAB_RANKINGS.md`
@@ -42,6 +50,7 @@ Lo que significa este estado:
 - la parte ya implementada de Fase 9 está operativa en código y cambia comportamiento real
 - no se considera Fase 9 cerrada porque aún faltan algunos puntos del plan original
 - no hay que rehacer lo ya hecho; solo validar con Node y rematar pendientes concretos
+- la nueva prioridad natural después de esta sesión es verificar Fase 1 con Node (`lint`, `build`) y luego seguir con la Fase 2 de `docs/PLAN_COMPLETION.md`
 
 ## Hecho en esta línea de trabajo
 

@@ -35,6 +35,11 @@ const SHARE_TYPE_OPTIONS = [
 ]
 
 const SHARE_COUNT_OPTIONS = [5, 10, 20]
+const INITIAL_PASSWORD_FORM = {
+  currentPassword: '',
+  newPassword: '',
+  confirmPassword: '',
+}
 
 function AvatarPreview({ value, size = 'md' }) {
   const className = `avatar-badge avatar-badge--${size}`
@@ -144,11 +149,11 @@ function buildEntryStats({
   dishTypesById,
   restaurantsById,
 }) {
-  if (currentUserEntries.length === 0) {
-    return []
-  }
-
   function getTopLabelByCount(items, getLabel) {
+    if (items.length === 0) {
+      return '—'
+    }
+
     const counts = items.reduce((acc, item) => {
       acc[item] = (acc[item] ?? 0) + 1
       return acc
@@ -159,23 +164,31 @@ function buildEntryStats({
   }
 
   const averageScore =
-    currentUserEntries.reduce(
-      (total, entry) => total + Number(entry.puntuacion_general ?? 0),
-      0,
-    ) / currentUserEntries.length
+    currentUserEntries.length > 0
+      ? currentUserEntries.reduce(
+          (total, entry) => total + Number(entry.puntuacion_general ?? 0),
+          0,
+        ) / currentUserEntries.length
+      : null
 
-  const bestEntry = [...currentUserEntries].sort(
-    (left, right) => right.puntuacion_general - left.puntuacion_general,
-  )[0]
-  const worstEntry = [...currentUserEntries].sort(
-    (left, right) => left.puntuacion_general - right.puntuacion_general,
-  )[0]
+  const bestEntry =
+    currentUserEntries.length > 0
+      ? [...currentUserEntries].sort(
+          (left, right) => right.puntuacion_general - left.puntuacion_general,
+        )[0]
+      : null
+  const worstEntry =
+    currentUserEntries.length > 0
+      ? [...currentUserEntries].sort(
+          (left, right) => left.puntuacion_general - right.puntuacion_general,
+        )[0]
+      : null
 
   return [
     {
       id: 'average',
       label: 'Nota media',
-      value: formatScore(averageScore),
+      value: averageScore == null ? '—' : formatScore(averageScore),
     },
     {
       id: 'category',
@@ -219,16 +232,20 @@ function buildEntryStats({
     {
       id: 'best',
       label: 'Mejor valoración',
-      value: `${dishTypesById[bestEntry?.tipo_plato_id]?.nombre || 'Plato'} · ${formatScore(
-        bestEntry?.puntuacion_general ?? 0,
-      )}`,
+      value: bestEntry
+        ? `${dishTypesById[bestEntry.tipo_plato_id]?.nombre || 'Plato'} · ${formatScore(
+            bestEntry.puntuacion_general ?? 0,
+          )}`
+        : '—',
     },
     {
       id: 'worst',
       label: 'Puntuación más baja',
-      value: `${dishTypesById[worstEntry?.tipo_plato_id]?.nombre || 'Plato'} · ${formatScore(
-        worstEntry?.puntuacion_general ?? 0,
-      )}`,
+      value: worstEntry
+        ? `${dishTypesById[worstEntry.tipo_plato_id]?.nombre || 'Plato'} · ${formatScore(
+            worstEntry.puntuacion_general ?? 0,
+          )}`
+        : '—',
     },
   ]
 }
@@ -344,6 +361,8 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
     users,
     weeklyStreak,
     createInspirationList,
+    changePassword,
+    logout,
   } = useAppState()
 
   const [isStatsOpen, setIsStatsOpen] = useState(true)
@@ -360,12 +379,17 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
   const [isGroupShareOpen, setIsGroupShareOpen] = useState(false)
   const [shareGroupId, setShareGroupId] = useState('')
   const [isCreateListOpen, setIsCreateListOpen] = useState(false)
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false)
   const [newListName, setNewListName] = useState('')
+  const [passwordForm, setPasswordForm] = useState(INITIAL_PASSWORD_FORM)
   const [status, setStatus] = useState({ tone: '', message: '' })
   const [shareType, setShareType] = useState('restaurant')
   const [shareContext, setShareContext] = useState('private')
   const [shareCount, setShareCount] = useState(5)
   const [isShareLoading, setIsShareLoading] = useState(false)
+  const [isPasswordSaving, setIsPasswordSaving] = useState(false)
+  const currentUserId = currentUser?.id ?? null
+  const currentUserName = currentUser?.nombre || 'Tu perfil'
 
   const restaurantsById = useMemo(
     () => Object.fromEntries(restaurants.map((restaurant) => [restaurant.id, restaurant])),
@@ -385,22 +409,28 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
   )
 
   const followers = useMemo(
-    () => follows.filter((follow) => follow.followed_user_id === currentUser.id),
-    [currentUser.id, follows],
+    () =>
+      currentUserId
+        ? follows.filter((follow) => follow.followed_user_id === currentUserId)
+        : [],
+    [currentUserId, follows],
   )
   const following = useMemo(
-    () => follows.filter((follow) => follow.follower_user_id === currentUser.id),
-    [currentUser.id, follows],
+    () =>
+      currentUserId
+        ? follows.filter((follow) => follow.follower_user_id === currentUserId)
+        : [],
+    [currentUserId, follows],
   )
   const activeGroupMember = useMemo(
     () =>
       groupMembers.find(
         (member) =>
           member.group_id === currentGroup?.id &&
-          member.user_id === currentUser.id &&
+          member.user_id === currentUserId &&
           member.status === 'active',
       ) ?? null,
-    [currentGroup?.id, currentUser.id, groupMembers],
+    [currentGroup?.id, currentUserId, groupMembers],
   )
 
   const allAchievements = useMemo(
@@ -493,7 +523,7 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
       buildSharePreview({
         contextId: shareContext,
         currentGroupId: currentGroup?.id ?? null,
-        currentUserId: currentUser.id,
+        currentUserId,
         state: {
           categories,
           dishEntries,
@@ -505,7 +535,7 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
     [
       categories,
       currentGroup?.id,
-      currentUser.id,
+      currentUserId,
       dishEntries,
       dishTypes,
       restaurants,
@@ -526,6 +556,10 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
   ]
 
   useEffect(() => {
+    if (!currentUserId) {
+      return undefined
+    }
+
     let cancelled = false
 
     async function hydrateProfileSocialState() {
@@ -552,6 +586,7 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
+    currentUserId,
     socialLoadState.achievements,
     socialLoadState.follows,
     socialLoadState.inspirationLists,
@@ -595,9 +630,17 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
   async function handleCreateList(event) {
     event.preventDefault()
 
+    if (!currentUserId) {
+      setStatus({
+        tone: 'error',
+        message: 'Error al guardar ❌ — La sesión todavía no está lista.',
+      })
+      return
+    }
+
     try {
       await createInspirationList({
-        user_id: currentUser.id,
+        user_id: currentUserId,
         name: newListName.trim(),
         is_default: false,
       })
@@ -612,7 +655,64 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
     }
   }
 
+  async function handlePasswordSubmit(event) {
+    event.preventDefault()
+
+    if (passwordForm.newPassword.trim().length < 8) {
+      setStatus({
+        tone: 'error',
+        message: 'La nueva contraseña debe tener al menos 8 caracteres.',
+      })
+      return
+    }
+
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      setStatus({
+        tone: 'error',
+        message: 'La confirmación de contraseña no coincide.',
+      })
+      return
+    }
+
+    try {
+      setIsPasswordSaving(true)
+      await changePassword({
+        currentPassword: passwordForm.currentPassword,
+        newPassword: passwordForm.newPassword,
+      })
+      setPasswordForm(INITIAL_PASSWORD_FORM)
+      setIsPasswordModalOpen(false)
+      setStatus({ tone: 'success', message: 'Guardado ✅' })
+    } catch (error) {
+      setStatus({
+        tone: 'error',
+        message: `Error al guardar ❌ — ${error instanceof Error ? error.message : 'No se pudo cambiar la contraseña.'}`,
+      })
+    } finally {
+      setIsPasswordSaving(false)
+    }
+  }
+
+  async function handleLogout() {
+    try {
+      await logout()
+    } catch (error) {
+      setStatus({
+        tone: 'error',
+        message: `Error al guardar ❌ — ${error instanceof Error ? error.message : 'No se pudo cerrar la sesión.'}`,
+      })
+    }
+  }
+
   async function handleShareRanking({ shouldUseWebShare = false } = {}) {
+    if (!currentUserId) {
+      setStatus({
+        tone: 'error',
+        message: 'Error al guardar ❌ — La sesión todavía no está lista.',
+      })
+      return
+    }
+
     try {
       setIsShareLoading(true)
       const response = await createPublicShareToken({
@@ -623,7 +723,7 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
               ? 'grupo'
               : 'comunidad',
         ranking_type: shareType,
-        created_by_user_id: currentUser.id,
+        created_by_user_id: currentUserId,
         group_id: shareContext === 'group' ? currentGroup?.id ?? null : null,
         filters: {},
       })
@@ -675,6 +775,17 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
     }
   }
 
+  if (!currentUser) {
+    return (
+      <section className="screen profile-screen" aria-label="Pantalla de perfil">
+        <article className="surface-card">
+          <strong>Cargando perfil</strong>
+          <p>Cargando...</p>
+        </article>
+      </section>
+    )
+  }
+
   return (
     <section className="screen profile-screen" aria-label="Pantalla de perfil">
       <article className="surface-card profile-hero">
@@ -693,7 +804,8 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
               <span className="status-pill">⭐ {userLevel}</span>
             </div>
             <p className="profile-hero__bio">
-              Tu historia foodie empieza aquí. Edita nombre y avatar para dejar el perfil a tu gusto.
+              {currentUser.bio?.trim() ||
+                'Tu historia foodie empieza aquí. Edita nombre y avatar para dejar el perfil a tu gusto.'}
             </p>
             <p className="profile-hero__meta">
               Miembro desde {formatDate(currentUser.created_at)} · {weeklyStreak} semanas en racha
@@ -925,7 +1037,7 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
               const currentMember = groupMembers.find(
                 (member) =>
                   member.group_id === group.id &&
-                  member.user_id === currentUser.id &&
+                  member.user_id === currentUserId &&
                   member.status === 'active',
               )
 
@@ -1095,7 +1207,7 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
         <article className="profile-share-preview">
           <p className="profile-share-preview__eyebrow">Vista previa</p>
           <strong>
-            {currentUser.nombre} · {SHARE_TYPE_OPTIONS.find((option) => option.id === shareType)?.label}
+            {currentUserName} · {SHARE_TYPE_OPTIONS.find((option) => option.id === shareType)?.label}
           </strong>
           <p>
             {shareContexts.find((option) => option.id === shareContext)?.label} · Top {shareCount}
@@ -1174,6 +1286,22 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
               </div>
             </article>
             <article className="settings-card">
+              <strong>Cuenta</strong>
+              <p>Email: {currentUser.email || 'Sin email asociado'}</p>
+              <div className="modal-actions">
+                <button
+                  className="pill-button"
+                  type="button"
+                  onClick={() => setIsPasswordModalOpen(true)}
+                >
+                  Cambiar contraseña
+                </button>
+                <button className="danger-button" type="button" onClick={handleLogout}>
+                  Cerrar sesión
+                </button>
+              </div>
+            </article>
+            <article className="settings-card">
               <strong>Pin por defecto</strong>
               <p>Se aplica al mapa salvo que un restaurante tenga override propio.</p>
               <div className="chip-row">
@@ -1242,6 +1370,80 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
             onCancel={() => setIsProfileEditorOpen(false)}
             onSaved={() => setIsProfileEditorOpen(false)}
           />
+        </ModalSheet>
+      ) : null}
+
+      {isPasswordModalOpen ? (
+        <ModalSheet
+          title="Cambiar contraseña"
+          onClose={() => {
+            setIsPasswordModalOpen(false)
+            setPasswordForm(INITIAL_PASSWORD_FORM)
+          }}
+        >
+          <form className="form-stack" onSubmit={handlePasswordSubmit}>
+            <label className="field">
+              <span>Contraseña actual</span>
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={passwordForm.currentPassword}
+                onChange={(event) =>
+                  setPasswordForm((current) => ({
+                    ...current,
+                    currentPassword: event.target.value,
+                  }))
+                }
+              />
+            </label>
+            <label className="field">
+              <span>Nueva contraseña</span>
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={passwordForm.newPassword}
+                onChange={(event) =>
+                  setPasswordForm((current) => ({
+                    ...current,
+                    newPassword: event.target.value,
+                  }))
+                }
+              />
+            </label>
+            <label className="field">
+              <span>Confirmar contraseña</span>
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={passwordForm.confirmPassword}
+                onChange={(event) =>
+                  setPasswordForm((current) => ({
+                    ...current,
+                    confirmPassword: event.target.value,
+                  }))
+                }
+              />
+            </label>
+            <div className="modal-actions">
+              <button
+                className="pill-button"
+                type="button"
+                onClick={() => {
+                  setIsPasswordModalOpen(false)
+                  setPasswordForm(INITIAL_PASSWORD_FORM)
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                className="primary-button"
+                type="submit"
+                disabled={isPasswordSaving}
+              >
+                {isPasswordSaving ? 'Guardando...' : 'Guardar contraseña'}
+              </button>
+            </div>
+          </form>
         </ModalSheet>
       ) : null}
 
