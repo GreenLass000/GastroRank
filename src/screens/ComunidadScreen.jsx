@@ -86,12 +86,16 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
     dishTypes,
     inspirationLists,
     loadComments,
+    loadFollows,
+    loadInspirationLists,
+    loadRecommendations,
     markRecommendationSeen,
     mutualFollows,
     recommendations,
     removeReaction,
     restaurants,
     saveToList,
+    socialLoadState,
     users,
   } = useAppState()
   const [tab, setTab] = useState('amigos')
@@ -107,6 +111,7 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
   const [isFeedLoading, setIsFeedLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [feedError, setFeedError] = useState('')
+  const [socialLoadError, setSocialLoadError] = useState('')
   const [dismissedRecommendationIds, setDismissedRecommendationIds] = useState([])
 
   const recommendationItems = useMemo(
@@ -121,6 +126,43 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
       }).filter((item) => !dismissedRecommendationIds.includes(item.id)),
     [currentUser, dismissedRecommendationIds, dishEntries, dishTypes, recommendations, restaurants, users],
   )
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function hydrateSocialState() {
+      try {
+        await Promise.all([
+          socialLoadState.follows ? Promise.resolve() : loadFollows(),
+          socialLoadState.recommendations ? Promise.resolve() : loadRecommendations(),
+          socialLoadState.inspirationLists ? Promise.resolve() : loadInspirationLists(),
+        ])
+
+        if (!cancelled) {
+          setSocialLoadError('')
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setSocialLoadError(
+            error instanceof Error
+              ? error.message
+              : 'No se pudieron cargar los datos sociales de comunidad.',
+          )
+        }
+      }
+    }
+
+    hydrateSocialState()
+
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    socialLoadState.follows,
+    socialLoadState.inspirationLists,
+    socialLoadState.recommendations,
+  ])
 
   useEffect(() => {
     let cancelled = false
@@ -332,6 +374,13 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
 
       {feedError ? (
         <StatusBanner tone="error" title="Error al cargar" detail={feedError} />
+      ) : null}
+      {socialLoadError ? (
+        <StatusBanner
+          tone="error"
+          title="Datos sociales incompletos"
+          detail={socialLoadError}
+        />
       ) : null}
 
       {tab === 'amigos' ? (

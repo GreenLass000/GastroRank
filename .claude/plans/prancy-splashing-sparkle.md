@@ -1,8 +1,11 @@
-# GastroRank: Comunidad + Perfil Redesign Plan
+# GastroRank: Plan de Finalización
+
+> El plan anterior de Comunidad + Perfil ya fue implementado completamente según CHECKPOINT.md.
+> El plan activo es `docs/PLAN_COMPLETION.md` en el repo.
 
 ## Context
-Two major feature additions requested:
-1. Replace the "Listas" tab with a new "Comunidad" social screen
+Three areas of work remaining:
+1. Authentication system (login/register/logout) — the app has zero auth, single hardcoded user
 2. Redesign the "Perfil" screen with achievements, badges, inspiration lists, and ranking sharing
 Plus efficiency/security improvements post-implementation.
 

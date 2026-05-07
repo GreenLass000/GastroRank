@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ProfileForm } from '../components/forms/ProfileForm.jsx'
 import { GroupForm } from '../components/forms/GroupForm.jsx'
 import { ModalSheet } from '../components/layout/ModalSheet.jsx'
 import { SectionHeader } from '../components/layout/SectionHeader.jsx'
+import { ACHIEVEMENT_META, getAchievementMeta } from '../lib/achievements.js'
 import { useAppState } from '../hooks/useAppState.js'
 import { createPublicShareToken } from '../lib/api.js'
 import { PIN_STYLES } from '../lib/constants.js'
@@ -18,59 +19,6 @@ import {
   buildGlobalRankings,
   buildRestaurantRankings,
 } from '../lib/ranking.js'
-
-const ACHIEVEMENT_META = {
-  primer_plato: {
-    icon: '🍽️',
-    title: 'Primer plato',
-    description: 'Has publicado tu primera valoración.',
-  },
-  cinco_platos: {
-    icon: '✋',
-    title: 'Cinco platos',
-    description: 'Ya llevas cinco platos puntuados.',
-  },
-  diez_platos: {
-    icon: '🔟',
-    title: 'Diez platos',
-    description: 'Tu historial ya tiene diez valoraciones.',
-  },
-  primer_restaurante: {
-    icon: '📍',
-    title: 'Primer restaurante',
-    description: 'Has estrenado tu mapa foodie.',
-  },
-  cinco_restaurantes: {
-    icon: '🗺️',
-    title: 'Cinco restaurantes',
-    description: 'Tu radar ya cubre cinco locales.',
-  },
-  catador_social: {
-    icon: '💬',
-    title: 'Catador social',
-    description: 'Tus platos han generado conversación.',
-  },
-  explorador: {
-    icon: '🧭',
-    title: 'Explorador',
-    description: 'Has tocado varias categorías distintas.',
-  },
-  racha_semanal: {
-    icon: '🔥',
-    title: 'Racha semanal',
-    description: 'Mantienes semanas consecutivas puntuando.',
-  },
-  top_score: {
-    icon: '⭐',
-    title: 'Top score',
-    description: 'Has dado al menos un 9 o más.',
-  },
-  coleccionista_inspo: {
-    icon: '🔖',
-    title: 'Coleccionista inspo',
-    description: 'Tus listas ya tienen buena profundidad.',
-  },
-}
 
 const ENTRY_FILTERS = [
   { id: 'all', label: 'Todos' },
@@ -112,27 +60,11 @@ function AvatarPreview({ value, size = 'md' }) {
 }
 
 function buildAchievementState(achievement, weeklyStreak, userLevel) {
-  const meta = ACHIEVEMENT_META[achievement.badge_type] ?? {
-    icon: '🏅',
-    title: achievement.badge_type,
-    description: 'Logro desbloqueado.',
-  }
-
-  if (achievement.badge_type === 'racha_semanal') {
-    return {
-      ...meta,
-      helper:
-        weeklyStreak > 0
-          ? `Racha actual: ${weeklyStreak} semanas`
-          : 'Añade un plato esta semana para empezar la racha.',
-      progress: Math.min(weeklyStreak, 3),
-      target: 3,
-    }
-  }
+  const meta = getAchievementMeta(achievement.badge_type)
 
   return {
     ...meta,
-    helper: `Nivel actual: ${userLevel}`,
+    helper: `Nivel actual: ${userLevel} · racha ${weeklyStreak} semanas`,
     progress: 1,
     target: 1,
   }
@@ -156,19 +88,15 @@ function buildAllAchievements(achievements, weeklyStreak, userLevel) {
       }
     }
 
-    const progress =
-      badgeType === 'racha_semanal' ? Math.min(weeklyStreak, 3) : 0
-    const target = badgeType === 'racha_semanal' ? 3 : 1
-
     return {
       ...meta,
       badgeType,
       helper:
-        badgeType === 'racha_semanal'
-          ? 'Necesitas tres semanas seguidas con actividad.'
+        badgeType === 'social'
+          ? 'Necesitas reacciones de otras personas en tus platos públicos.'
           : 'Sigue valorando para desbloquearlo.',
-      progress,
-      target,
+      progress: 0,
+      target: 1,
       unlocked: false,
       unlockedAt: '',
     }
@@ -403,12 +331,15 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
     groupsForCurrentUser,
     inspirationListItems,
     inspirationLists,
+    loadFollows,
     loadAchievements,
+    loadInspirationLists,
     markTried,
     profileStats,
     removeFromList,
     restaurants,
     setDefaultPinStyle,
+    socialLoadState,
     userLevel,
     users,
     weeklyStreak,
@@ -593,6 +524,38 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
     },
     { id: 'groups', label: 'Grupos', value: String(profileStats.grupos) },
   ]
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function hydrateProfileSocialState() {
+      try {
+        await Promise.all([
+          socialLoadState.follows ? Promise.resolve() : loadFollows(),
+          socialLoadState.inspirationLists ? Promise.resolve() : loadInspirationLists(),
+          socialLoadState.achievements ? Promise.resolve() : loadAchievements(),
+        ])
+      } catch (error) {
+        if (!cancelled) {
+          setStatus({
+            tone: 'error',
+            message: `Error al cargar ❌ — ${error instanceof Error ? error.message : 'No se pudieron cargar los datos sociales del perfil.'}`,
+          })
+        }
+      }
+    }
+
+    hydrateProfileSocialState()
+
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    socialLoadState.achievements,
+    socialLoadState.follows,
+    socialLoadState.inspirationLists,
+  ])
 
   async function copyText(value, successMessage) {
     try {

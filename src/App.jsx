@@ -29,17 +29,30 @@ const SCREEN_COMPONENTS = {
   report: ReportScreen,
 }
 
+function normalizeScreenId(screenId) {
+  if (screenId === 'lists') {
+    return 'community'
+  }
+
+  return screenId
+}
+
 function readNavigationState() {
   const params = new URLSearchParams(window.location.search)
+  const legacyScreen = normalizeScreenId(params.get('screen') || '')
+
   return {
     activeScreen:
-      params.get('share') || window.location.pathname === '/informe' ? 'report' : 'home',
+      params.get('share') || window.location.pathname === '/informe'
+        ? 'report'
+        : legacyScreen || 'home',
     shareToken: params.get('share') || '',
   }
 }
 
 function writeNavigationState(nextScreen, shareToken = '') {
   const params = new URLSearchParams(window.location.search)
+  const normalizedScreen = normalizeScreenId(nextScreen)
 
   if (shareToken) {
     params.set('share', shareToken)
@@ -47,8 +60,10 @@ function writeNavigationState(nextScreen, shareToken = '') {
     params.delete('share')
   }
 
+  params.delete('screen')
+
   const nextQuery = params.toString()
-  const nextPath = nextScreen === 'report' ? '/informe' : '/'
+  const nextPath = normalizedScreen === 'report' ? '/informe' : '/'
   const nextUrl = `${nextPath}${nextQuery ? `?${nextQuery}` : ''}`
   window.history.pushState({}, '', nextUrl)
 }
@@ -72,11 +87,13 @@ function App() {
   const showTopbar = true
 
   function handleScreenChange(nextScreen) {
-    setActiveScreen(nextScreen)
+    const normalizedScreen = normalizeScreenId(nextScreen)
+
+    setActiveScreen(normalizedScreen)
     setShareToken('')
     setSharePayload(null)
     setShareError('')
-    writeNavigationState(nextScreen)
+    writeNavigationState(normalizedScreen)
   }
 
   function openEntityDetail(target) {

@@ -77,8 +77,12 @@ async function requestJson(pathname, { body, method, timeoutMs = 6000 } = {}) {
   }
 }
 
-export function fetchBootstrapData() {
-  return fetchJson('/api/bootstrap')
+export function fetchBootstrapData({ includeSocial = false } = {}) {
+  return fetchJson(
+    `/api/bootstrap${buildQueryString({
+      include_social: includeSocial ? 1 : undefined,
+    })}`,
+  )
 }
 
 export function fetchFollows({ userId, currentUserId, viewerUserId } = {}) {
@@ -249,6 +253,14 @@ export function fetchAchievements({ userId, currentUserId, viewerUserId } = {}) 
 export function createAchievement(payload) {
   return requestJson('/api/achievements', {
     method: 'POST',
+    body: payload,
+    timeoutMs: 15000,
+  })
+}
+
+export function updateAchievement(achievementId, payload = {}) {
+  return requestJson(`/api/achievements/${encodeURIComponent(achievementId)}`, {
+    method: 'PUT',
     body: payload,
     timeoutMs: 15000,
   })

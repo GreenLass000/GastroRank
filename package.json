@@ -9,17 +9,20 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "api:dev": "node server/app.js",
-    "db:init": "bash scripts/db/init.sh",
-    "db:seed": "bash scripts/db/seed.sh",
-    "db:reset": "bash scripts/db/reset.sh",
-    "db:verify": "bash scripts/db/verify.sh"
+    "db:push": "drizzle-kit push",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
+    "drizzle-orm": "^0.38.0",
     "leaflet": "^1.9.4",
+    "postgres": "^3.4.5",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   },
   "devDependencies": {
+    "drizzle-kit": "^0.30.0",
     "@eslint/js": "^9.39.4",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

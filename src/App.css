@@ -1518,6 +1518,13 @@
   background: var(--color-red);
 }
 
+.toast-center--achievement {
+  background: linear-gradient(135deg, #ff6b35, #7b2d8b);
+  box-shadow:
+    0 14px 28px rgba(123, 45, 139, 0.24),
+    0 0 0 4px rgba(255, 255, 255, 0.14);
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;

@@ -19,7 +19,7 @@ export const NAV_ITEMS = [
   { id: 'home', icon: '🏠', label: 'Inicio' },
   { id: 'rankings', icon: '🏆', label: 'Rankings' },
   { id: 'map', icon: '🗺️', label: 'Mapa' },
-  { id: 'community', icon: '👥', label: 'Comunidad' },
+  { id: 'community', icon: '🌍', label: 'Comunidad' },
   { id: 'profile', icon: '👤', label: 'Perfil' },
 ]
 

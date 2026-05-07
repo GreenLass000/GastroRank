@@ -30,16 +30,19 @@ Current next-step assumption:
 - Comunidad + Perfil:
   - `Fase 5`: closed in code
   - `Fase 6`: closed in code
-  - next natural block: `Fase 7` (navegación y cierre de migración de `Listas`)
+  - `Fase 7`: closed in code
+  - `Fase 8`: closed in code
+  - `Fase 9`: parcial en código
+  - siguiente bloque natural: verificación con Node + remate de pendientes de `Fase 9` no cubiertos
 
 Current files that matter most for the next block:
 - `docs/CHECKPOINT.md`
-- `docs/CHECKLIST_TECNICO.md`
-- `src/screens/ProfileScreen.jsx`
+- `server/app.js`
+- `src/providers/AppStateProvider.jsx`
 - `src/screens/ComunidadScreen.jsx`
-- `src/App.jsx`
-- `src/lib/constants.js`
-- `src/App.css`
+- `src/lib/achievements.js`
+- `src/screens/ProfileScreen.jsx`
+- `src/lib/api.js`
 
 ## Current Map Stack
 The project currently uses **Leaflet + OpenStreetMap** as the real map implementation for both the main map and the restaurant mini map. Do not assume Google Maps is the active provider unless a future task explicitly reintroduces it. Current map behavior that contributors should preserve:

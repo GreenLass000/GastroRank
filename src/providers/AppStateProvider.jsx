@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { createSeedData } from '../data/seed.js'
 import { AppStateContext } from '../context/appStateContext.js'
+import { getAchievementTitle } from '../lib/achievements.js'
 import {
   createAchievement as createAchievementRequest,
   createCategory as createCategoryRequest,
@@ -23,6 +24,7 @@ import {
   fetchInspirationLists as fetchInspirationListsRequest,
   fetchRecommendations as fetchRecommendationsRequest,
   updateCategory as updateCategoryRequest,
+  updateAchievement as updateAchievementRequest,
   updateDishEntry as updateDishEntryRequest,
   updateDishType as updateDishTypeRequest,
   updateGroup as updateGroupRequest,
@@ -64,56 +66,89 @@ const USER_LEVELS = [
 
 const ACHIEVEMENT_DEFINITIONS = [
   {
-    badgeType: 'primer_plato',
-    matches: ({ currentUserEntries }) => currentUserEntries.length >= 1,
+    badgeType: 'croquetero',
+    matches: ({ sameDishTypeMaxCount }) => sameDishTypeMaxCount >= 5,
   },
   {
-    badgeType: 'cinco_platos',
-    matches: ({ currentUserEntries }) => currentUserEntries.length >= 5,
+    badgeType: 'exploradora',
+    matches: ({ distinctRestaurantsCount }) => distinctRestaurantsCount >= 10,
   },
   {
-    badgeType: 'diez_platos',
-    matches: ({ currentUserEntries }) => currentUserEntries.length >= 10,
+    badgeType: 'foodie_visual',
+    matches: ({ entriesWithPhotoCount }) => entriesWithPhotoCount >= 10,
   },
   {
-    badgeType: 'primer_restaurante',
-    matches: ({ currentUserEntries }) =>
-      new Set(currentUserEntries.map((entry) => entry.restaurant_id)).size >= 1,
+    badgeType: 'sin_fronteras',
+    matches: ({ distinctCitiesCount }) => distinctCitiesCount >= 3,
   },
   {
-    badgeType: 'cinco_restaurantes',
-    matches: ({ currentUserEntries }) =>
-      new Set(currentUserEntries.map((entry) => entry.restaurant_id)).size >= 5,
+    badgeType: 'referente',
+    matches: ({ communityTopTenEntriesCount }) => communityTopTenEntriesCount >= 3,
   },
   {
-    badgeType: 'catador_social',
-    matches: ({ currentUserEntries, reactions, currentUserId }) =>
-      reactions.filter(
-        (reaction) =>
-          reaction.user_id !== currentUserId &&
-          currentUserEntries.some((entry) => entry.id === reaction.dish_entry_id),
-      ).length >= 10,
+    badgeType: 'exigente',
+    matches: ({ fullyScoredEntriesCount }) => fullyScoredEntriesCount >= 20,
   },
   {
-    badgeType: 'explorador',
-    matches: ({ currentUserEntries }) =>
-      new Set(currentUserEntries.map((entry) => entry.categoria_id)).size >= 5,
+    badgeType: 'habitual',
+    matches: ({ sameRestaurantMaxCount }) => sameRestaurantMaxCount >= 5,
   },
   {
-    badgeType: 'racha_semanal',
-    matches: ({ weeklyStreak }) => weeklyStreak >= 3,
+    badgeType: 'omnivoro',
+    matches: ({ distinctCategoriesCount }) => distinctCategoriesCount >= 5,
   },
   {
-    badgeType: 'top_score',
-    matches: ({ currentUserEntries }) =>
-      currentUserEntries.some((entry) => Number(entry.puntuacion_general ?? 0) >= 9),
+    badgeType: 'social',
+    matches: ({ reactionsFromOthersCount }) => reactionsFromOthersCount >= 10,
   },
   {
-    badgeType: 'coleccionista_inspo',
-    matches: ({ inspirationListItems, currentUserListIds }) =>
-      inspirationListItems.filter((item) => currentUserListIds.has(item.list_id)).length >= 5,
+    badgeType: 'top_chef',
+    matches: ({ categoryWinsCount }) => categoryWinsCount >= 1,
   },
 ]
+
+function parseCityFromAddress(address) {
+  const parts = String(address ?? '')
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+
+  return parts[parts.length - 1] || ''
+}
+
+function getMaxCountBy(items) {
+  const counts = items.reduce((acc, item) => {
+    acc[item] = (acc[item] ?? 0) + 1
+    return acc
+  }, {})
+
+  const topCount = Object.values(counts).sort((left, right) => right - left)[0]
+  return Number(topCount ?? 0)
+}
+
+function hasAllSubscores(entry) {
+  return ['sabor', 'textura', 'presentacion', 'calidad_precio'].every(
+    (field) => typeof entry[field] === 'number',
+  )
+}
+
+function getTopEntryByCategory(entries) {
+  return Object.values(
+    entries.reduce((acc, entry) => {
+      acc[entry.categoria_id] ??= []
+      acc[entry.categoria_id].push(entry)
+      return acc
+    }, {}),
+  ).map((categoryEntries) =>
+    [...categoryEntries].sort((left, right) => {
+      if (right.puntuacion_general !== left.puntuacion_general) {
+        return right.puntuacion_general - left.puntuacion_general
+      }
+
+      return new Date(right.created_at) - new Date(left.created_at)
+    })[0],
+  )
+}
 
 function hydrateState() {
   const seed = createSeedData()
@@ -347,6 +382,54 @@ function buildHomeNearbySection({ origin, restaurants }) {
 
 function buildDerivedState(state, filters, filterOrigin) {
   const currentUser = state.users[0]
+
+  if (!currentUser) {
+    return {
+      currentUser: null,
+      currentGroup: null,
+      currentUserEntries: [],
+      follows: [],
+      reactions: [],
+      comments: [],
+      inspirationLists: [],
+      inspirationListItems: [],
+      achievements: [],
+      recommendations: [],
+      mutualFollows: [],
+      weeklyStreak: 0,
+      userLevel: null,
+      groupsForCurrentUser: [],
+      latestEntries: [],
+      rankingContexts: { private: { dishType: [], category: [], restaurant: [], global: [] }, group: { dishType: [], category: [], restaurant: [], global: [] }, public: { dishType: [], category: [], restaurant: [], global: [] } },
+      filteredDishEntries: [],
+      filteredLatestEntries: [],
+      filteredRankingContexts: { private: { dishType: [], category: [], restaurant: [], global: [] }, group: { dishType: [], category: [], restaurant: [], global: [] }, public: { dishType: [], category: [], restaurant: [], global: [] } },
+      filteredRestaurantsByScore: [],
+      activeFilters: normalizeFilters(filters, state.dishTypes),
+      activeFilterChips: [],
+      availableFilterOptions: buildAvailableFilterOptions({ categories: state.categories, dishTypes: state.dishTypes, entries: [], users: [] }),
+      filtersCount: 0,
+      hasActiveFilters: false,
+      filterOrigin,
+      filterOriginLabel: filterOrigin.source === 'geolocation' ? 'tu ubicación actual' : 'Valladolid',
+      profileStats: { totalPlatos: 0, totalRestaurantes: 0, grupos: 0 },
+      homeDishTypeSection: {
+        categories: [],
+        dishTypes: [],
+        dishTypesByCategoryId: {},
+        rankings: [],
+        rankingsByCategoryId: {},
+        rankingsByDishTypeId: {},
+      },
+      homeNearbySection: {
+        origin: { lat: filterOrigin.lat, lng: filterOrigin.lng, source: filterOrigin.source },
+        originLabel: filterOrigin.source === 'geolocation' ? 'Tu ubicación actual' : 'Valladolid',
+        restaurants: [],
+      },
+      restaurantsByScore: [],
+    }
+  }
+
   const follows = state.follows ?? []
   const reactions = state.reactions ?? []
   const comments = state.comments ?? []
@@ -564,12 +647,23 @@ export function AppStateProvider({ children }) {
   const [isLoading, setIsLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [dataSource, setDataSource] = useState('seed')
+  const [achievementNotificationInFlightId, setAchievementNotificationInFlightId] =
+    useState('')
   const [filterOrigin, setFilterOrigin] = useState({
     ...DEFAULT_MAP_CENTER,
     source: 'fallback',
   })
   const [toast, setToast] = useState({ message: '', tone: 'success' })
-  const derivedState = buildDerivedState(state, activeFilters, filterOrigin)
+  const [socialLoadState, setSocialLoadState] = useState({
+    follows: false,
+    inspirationLists: false,
+    recommendations: false,
+    achievements: false,
+  })
+  const derivedState = useMemo(
+    () => buildDerivedState(state, activeFilters, filterOrigin),
+    [activeFilters, filterOrigin, state],
+  )
 
   function clearToast() {
     setToast({ message: '', tone: 'success' })
@@ -659,6 +753,7 @@ export function AppStateProvider({ children }) {
       ...current,
       follows: response.follows,
     }))
+    setSocialLoadState((current) => ({ ...current, follows: true }))
 
     return response
   }
@@ -791,6 +886,7 @@ export function AppStateProvider({ children }) {
       inspirationLists: flattened.inspirationLists,
       inspirationListItems: flattened.inspirationListItems,
     }))
+    setSocialLoadState((current) => ({ ...current, inspirationLists: true }))
 
     return response
   }
@@ -874,6 +970,7 @@ export function AppStateProvider({ children }) {
       ...current,
       recommendations: response.recommendations,
     }))
+    setSocialLoadState((current) => ({ ...current, recommendations: true }))
 
     return response
   }
@@ -925,6 +1022,24 @@ export function AppStateProvider({ children }) {
         ...response.achievements,
       ],
     }))
+    setSocialLoadState((current) => ({ ...current, achievements: true }))
+
+    return response
+  }
+
+  async function markAchievementNotified(achievementId) {
+    const response = await updateAchievementRequest(achievementId, {
+      notified: true,
+    })
+
+    if (!response?.achievement) {
+      throw new Error('La API no devolvió el logro actualizado.')
+    }
+
+    setState((current) => ({
+      ...current,
+      achievements: replaceRecordById(current.achievements, response.achievement),
+    }))
 
     return response
   }
@@ -934,18 +1049,56 @@ export function AppStateProvider({ children }) {
     const currentUserEntries = nextState.dishEntries.filter(
       (entry) => entry.created_by_user_id === currentUserId,
     )
-    const currentUserListIds = new Set(
-      (nextState.inspirationLists ?? [])
-        .filter((list) => list.user_id === currentUserId)
-        .map((list) => list.id),
+    const currentUserEntryIds = new Set(currentUserEntries.map((entry) => entry.id))
+    const publicEntries = nextState.dishEntries.filter(
+      (entry) => entry.visibility === 'public',
     )
+    const restaurantsById = Object.fromEntries(
+      (nextState.restaurants ?? []).map((restaurant) => [restaurant.id, restaurant]),
+    )
+    const publicGlobalTopTen = buildGlobalRankings({
+      categories: nextState.categories ?? [],
+      currentGroupId: null,
+      currentUserId,
+      dishTypes: nextState.dishTypes ?? [],
+      entries: nextState.dishEntries ?? [],
+      restaurants: nextState.restaurants ?? [],
+      contextId: 'public',
+    }).slice(0, 10)
     const evaluationInput = {
       currentUserId,
-      currentUserEntries,
-      reactions: nextState.reactions ?? [],
+      sameDishTypeMaxCount: getMaxCountBy(
+        currentUserEntries.map((entry) => entry.tipo_plato_id),
+      ),
+      distinctRestaurantsCount: new Set(
+        currentUserEntries.map((entry) => entry.restaurant_id),
+      ).size,
+      entriesWithPhotoCount: currentUserEntries.filter((entry) => entry.foto_url).length,
+      distinctCitiesCount: new Set(
+        currentUserEntries
+          .map((entry) => parseCityFromAddress(restaurantsById[entry.restaurant_id]?.direccion_texto))
+          .filter(Boolean),
+      ).size,
+      communityTopTenEntriesCount: publicGlobalTopTen.filter((entry) =>
+        currentUserEntryIds.has(entry.id),
+      ).length,
+      fullyScoredEntriesCount: currentUserEntries.filter((entry) => hasAllSubscores(entry))
+        .length,
+      sameRestaurantMaxCount: getMaxCountBy(
+        currentUserEntries.map((entry) => entry.restaurant_id),
+      ),
+      distinctCategoriesCount: new Set(
+        currentUserEntries.map((entry) => entry.categoria_id),
+      ).size,
+      reactionsFromOthersCount: (nextState.reactions ?? []).filter(
+        (reaction) =>
+          reaction.user_id !== currentUserId &&
+          currentUserEntryIds.has(reaction.dish_entry_id),
+      ).length,
+      categoryWinsCount: getTopEntryByCategory(publicEntries).filter(
+        (entry) => entry?.created_by_user_id === currentUserId,
+      ).length,
       weeklyStreak: buildDerivedState(nextState, activeFilters, filterOrigin).weeklyStreak,
-      inspirationListItems: nextState.inspirationListItems ?? [],
-      currentUserListIds,
     }
     const unlockedBadgeTypes = new Set(
       (nextState.achievements ?? [])
@@ -1263,6 +1416,36 @@ export function AppStateProvider({ children }) {
     )
   }, [])
 
+  useEffect(() => {
+    const pendingAchievement =
+      (derivedState.achievements ?? []).find((achievement) => !achievement.notified) ?? null
+
+    if (!pendingAchievement || toast.message || achievementNotificationInFlightId) {
+      return
+    }
+
+    setAchievementNotificationInFlightId(pendingAchievement.id)
+    setToast({
+      message: `🎉 Logro desbloqueado: ${getAchievementTitle(pendingAchievement.badge_type)}`,
+      tone: 'achievement',
+    })
+
+    markAchievementNotified(pendingAchievement.id)
+      .catch((error) => {
+        setToast({
+          message: `Error al guardar ❌ — ${error instanceof Error ? error.message : 'No se pudo confirmar el logro.'}`,
+          tone: 'error',
+        })
+      })
+      .finally(() => {
+        setAchievementNotificationInFlightId('')
+      })
+  }, [
+    achievementNotificationInFlightId,
+    derivedState.achievements,
+    toast.message,
+  ])
+
   return (
     <AppStateContext.Provider
       value={{
@@ -1273,6 +1456,7 @@ export function AppStateProvider({ children }) {
         dataSource,
         toast,
         clearToast,
+        socialLoadState,
         defaultPinStyle: normalizePinStyle(defaultPinStyle),
         restaurantPinStyleOverrides: normalizePinStyleOverrides(
           restaurantPinStyleOverrides,
@@ -1300,6 +1484,7 @@ export function AppStateProvider({ children }) {
         sendRecommendation,
         markRecommendationSeen,
         loadAchievements,
+        markAchievementNotified,
         checkAndUnlockAchievements,
         updateUser,
         createRestaurant,

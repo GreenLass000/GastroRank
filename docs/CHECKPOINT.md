@@ -18,9 +18,30 @@ Estado actual más relevante:
 - Fase 4 de `.claude/plans/prancy-splashing-sparkle.md`: estado global, métodos y derivados implementados en `src/providers/AppStateProvider.jsx`
 - Fase 5 de `.claude/plans/prancy-splashing-sparkle.md`: pantalla `Comunidad` y subcomponentes implementados en `src/screens/ComunidadScreen.jsx` y `src/components/community/`
 - Fase 6 de `.claude/plans/prancy-splashing-sparkle.md`: rediseño principal de `Perfil` implementado en `src/screens/ProfileScreen.jsx` y `src/App.css`
+- Fase 7 de `.claude/plans/prancy-splashing-sparkle.md`: navegación cerrada con `Comunidad`, compatibilidad legado `lists` y archivado explícito de `ListsScreen`
+- Fase 8 de `.claude/plans/prancy-splashing-sparkle.md`: lógica final de logros implementada con badges definitivos, cola de toast y marcado `notified`
+- Fase 9 de `.claude/plans/prancy-splashing-sparkle.md`: implementada de forma parcial pero funcional
 - `RankingsScreen.jsx` ya no depende de `filteredRankingContexts`
 - detalle de filas en `Rankings` migrado de `ModalSheet` a expansión inline compacta
-- siguiente bloque natural para ese plan: Fase 7 en navegación y cierre de migración de `Listas`
+- siguiente bloque natural para ese plan: verificación con Node y cierre de los puntos pendientes de Fase 9
+
+Cobertura actual de Fase 9 ya dejada en código:
+
+- `server/app.js` exige `Content-Type: application/json` en `POST`/`PUT`
+- rate limiting básico por IP añadido en la API local con respuesta `429`
+- validación de `mentions` endurecida para comentarios
+- feed `Explorar` sigue restringido a `visibility='public'`
+- feed `Amigos` ahora exige follow mutuo y solo deja pasar entradas `public` o `group` con grupo compartido activo
+- recomendaciones restringidas a follows mutuos tanto al crear como al leer inbox
+- `/api/bootstrap` ya no arrastra por defecto follows, reactions, comments, listas, recomendaciones y logros
+- `Comunidad` y `Perfil` cargan esos bloques sociales en diferido
+- `AppStateProvider` memoiza `buildDerivedState()` para evitar recomputación completa en cada render
+
+Lo que significa este estado:
+
+- la parte ya implementada de Fase 9 está operativa en código y cambia comportamiento real
+- no se considera Fase 9 cerrada porque aún faltan algunos puntos del plan original
+- no hay que rehacer lo ya hecho; solo validar con Node y rematar pendientes concretos
 
 ## Hecho en esta línea de trabajo
 
@@ -212,13 +233,64 @@ Resultado actual:
   - exportación CSV
   - acceso al catálogo editable
 
+### Navegación / cierre de `Listas` — Fase 7
+Archivos tocados:
+
+- `src/App.jsx`
+- `src/lib/constants.js`
+- `src/screens/ListsScreen.jsx`
+
+Resultado actual:
+
+- navegación inferior consolidada con `Comunidad` como pestaña real
+- icono de `Comunidad` actualizado a `🌍`
+- cualquier referencia legado a `lists` se normaliza a `community`
+- `ListsScreen` ya no aparenta ser una pantalla principal activa
+- `ListsScreen` queda archivada como pantalla de compatibilidad con CTA a `Comunidad` y `Perfil`
+- exportación CSV y listas guardadas siguen viviendo en `Perfil`
+
+### Logros automáticos — Fase 8
+Archivos tocados:
+
+- `src/lib/achievements.js`
+- `src/providers/AppStateProvider.jsx`
+- `src/lib/api.js`
+- `server/app.js`
+- `server/db/migrations/001_initial_schema.sql`
+- `src/screens/ProfileScreen.jsx`
+- `src/App.css`
+
+Resultado actual:
+
+- catálogo único de logros compartido entre frontend y backend
+- badges finales activos:
+  - `Croquetero/a`
+  - `Explorador/a`
+  - `Foodie visual`
+  - `Sin fronteras`
+  - `Referente`
+  - `Exigente`
+  - `Habitual`
+  - `Omnívoro/a`
+  - `Social`
+  - `Top Chef`
+- `createDishEntry()` ya evalúa condiciones reales de Fase 8 tras guardar
+- añadido marcado persistente `notified=true` para evitar toasts repetidos
+- cola de notificaciones de logro implementada sobre `toast`
+- nuevo tono visual `achievement` para el toast de desbloqueo
+- `ProfileScreen` ya consume el nuevo catálogo de badges
+
 ## Pendiente inmediato
 
 La siguiente sesión debería centrarse en verificación o ajustes puntuales:
 
 1. ejecutar `npm run lint`
 2. ejecutar `npm run build`
-3. si se retoma el plan de Comunidad + Perfil, continuar por Fase 7 (`Comunidad` en navegación y cierre de migración de `Listas`)
+3. si se retoma el plan de Comunidad + Perfil, cerrar Fase 9 rematando:
+- paginación real a nivel SQLite en feed
+- revisión de `execFile/sqlite3` para parametrización más fuerte en escrituras
+- carga de avatar/imagen con pipeline real
+- posible división de estilos de `App.css`
 4. si no, revisar en móvil:
 - buscador de zona en `Mapa`
 - popup mínimo sobre pin
@@ -238,6 +310,9 @@ La siguiente sesión debería centrarse en verificación o ajustes puntuales:
 - compartir grupo
 - detalle de `Mis listas`
 - bloque `Compartir mi ranking`
+- navegación inferior con `🌍 Comunidad`
+- compatibilidad legado si reaparece algún acceso a `lists`
+- desbloqueo de logros con toast especial
 5. corregir solo si aparece regresión visual o de datos
 
 ## Riesgos / decisiones abiertas
@@ -247,7 +322,19 @@ La siguiente sesión debería centrarse en verificación o ajustes puntuales:
 - el repo sigue sin `docs/CHECKLIST_TECNICO.md`
 - el nuevo buscador de `Mapa` usa búsqueda externa equivalente a Places cuando la red lo permite; falta validarlo en entorno real
 - el perfil ya usa follows, achievements, inspiration lists y share links, pero el backend de usuario sigue persistiendo solo `nombre` y `avatar_url` sin `bio`
-- Fase 7 sigue pendiente: la navegación y el cierre funcional definitivo de `Listas` aún no están rematados
+- para aplicar los nuevos `badge_type` en SQLite real hará falta `npm run db:reset` cuando el entorno vuelva a tener Node disponible
+- Fase 9 no está cerrada todavía, pero tampoco está pendiente entera
+- ya cubierto:
+  - rate limit básico
+  - `Content-Type` obligatorio en escrituras HTTP
+  - enforcement de visibilidad y follows mutuos
+  - lazy-load social en `Comunidad` y `Perfil`
+  - memoización de derivados en el provider
+- pendiente:
+  - paginación SQL real
+  - uploads
+  - posible partición de `App.css`
+  - endurecimiento adicional de escrituras SQLite
 
 ## Limitación del entorno
 
@@ -259,7 +346,7 @@ No se ha podido ejecutar verificación con:
 
 Motivo:
 
-- `npm` y `node` no están disponibles en este entorno (`/bin/bash: command not found`)
+- `npm` y `node` no están disponibles en este entorno el 2026-05-05 (`/bin/bash: command not found`)
 
 Sí se ha podido ejecutar:
 
@@ -270,11 +357,9 @@ Sí se ha podido ejecutar:
 
 - `docs/CHECKPOINT.md`
 - `docs/CAMBIOS_TAB_RANKINGS.md`
+- `server/app.js`
 - `src/screens/ProfileScreen.jsx`
-- `src/screens/MapScreen.jsx`
-- `src/components/map/MapView.jsx`
-- `src/screens/RankingsScreen.jsx`
-- `src/lib/ranking.js`
-- `src/components/rankings/RankingList.jsx`
-- `src/components/rankings/RankingCard.jsx`
-- `src/App.css`
+- `src/screens/ComunidadScreen.jsx`
+- `src/lib/achievements.js`
+- `src/lib/api.js`
+- `src/providers/AppStateProvider.jsx`

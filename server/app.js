@@ -1,9 +1,7 @@
-import { execFile, spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync } from 'node:fs'
 import http from 'node:http'
-import path from 'node:path'
-import { promisify } from 'node:util'
+import { and, asc, desc, eq } from 'drizzle-orm'
+import { ACHIEVEMENT_TYPES } from '../src/lib/achievements.js'
 import {
   validateCategoryPayload,
   validateDishEntryPayload,
@@ -12,34 +10,65 @@ import {
   validateRestaurantPayload,
   validateUserPayload,
 } from '../src/lib/validation.js'
+import { db } from './db/client.js'
+import * as schema from './db/schema.js'
 
-const execFileAsync = promisify(execFile)
 const PORT = Number(process.env.PORT ?? 3030)
 const HOST = process.env.HOST ?? '0.0.0.0'
 const MAX_REQUEST_BODY_BYTES = 80 * 1024 * 1024
-const SQLITE_JSON_MAX_BUFFER_BYTES = 128 * 1024 * 1024
-const DB_PATH =
-  process.env.DATABASE_PATH ??
-  path.join(process.cwd(), 'server/db/data/ranking_gastronomico.sqlite')
+const RATE_LIMIT_WINDOW_MS = 60 * 1000
+const RATE_LIMIT_MAX_REQUESTS = 120
+const requestBuckets = new Map()
 
-const ROUTE_QUERIES = {
-  users: 'SELECT * FROM users ORDER BY created_at ASC;',
-  groups: 'SELECT * FROM "groups" ORDER BY created_at ASC;',
-  groupMembers: 'SELECT * FROM group_members ORDER BY joined_at ASC;',
-  restaurants: 'SELECT * FROM restaurants ORDER BY created_at ASC;',
-  categories: 'SELECT * FROM categories ORDER BY nombre ASC;',
-  dishTypes: 'SELECT * FROM dish_types ORDER BY nombre ASC;',
-  dishEntries: 'SELECT * FROM dish_entries ORDER BY created_at ASC;',
-  publicShareTokens: 'SELECT * FROM public_share_tokens ORDER BY created_at ASC;',
-  follows: 'SELECT * FROM follows ORDER BY created_at DESC;',
-  reactions: 'SELECT * FROM reactions ORDER BY created_at DESC;',
-  comments: 'SELECT * FROM comments ORDER BY created_at ASC;',
-  inspirationLists: 'SELECT * FROM inspiration_lists ORDER BY created_at ASC;',
-  inspirationListItems:
-    'SELECT * FROM inspiration_list_items ORDER BY saved_at DESC;',
-  recommendations: 'SELECT * FROM recommendations ORDER BY created_at DESC;',
-  achievements: 'SELECT * FROM achievements ORDER BY unlocked_at DESC;',
+// ---------------------------------------------------------------------------
+// DB fetch helpers (replaces ROUTE_QUERIES + runJsonQuery)
+// ---------------------------------------------------------------------------
+
+const FETCH = {
+  users: () => db.select().from(schema.users).orderBy(asc(schema.users.created_at)),
+  groups: () => db.select().from(schema.groups).orderBy(asc(schema.groups.created_at)),
+  groupMembers: () =>
+    db.select().from(schema.groupMembers).orderBy(asc(schema.groupMembers.joined_at)),
+  restaurants: () =>
+    db.select().from(schema.restaurants).orderBy(asc(schema.restaurants.created_at)),
+  categories: () => db.select().from(schema.categories).orderBy(asc(schema.categories.nombre)),
+  dishTypes: () => db.select().from(schema.dishTypes).orderBy(asc(schema.dishTypes.nombre)),
+  dishEntries: () =>
+    db.select().from(schema.dishEntries).orderBy(asc(schema.dishEntries.created_at)),
+  publicShareTokens: () =>
+    db
+      .select()
+      .from(schema.publicShareTokens)
+      .orderBy(asc(schema.publicShareTokens.created_at)),
+  follows: () => db.select().from(schema.follows).orderBy(desc(schema.follows.created_at)),
+  reactions: () =>
+    db.select().from(schema.reactions).orderBy(desc(schema.reactions.created_at)),
+  comments: () => db.select().from(schema.comments).orderBy(asc(schema.comments.created_at)),
+  inspirationLists: () =>
+    db
+      .select()
+      .from(schema.inspirationLists)
+      .orderBy(asc(schema.inspirationLists.created_at)),
+  inspirationListItems: () =>
+    db
+      .select()
+      .from(schema.inspirationListItems)
+      .orderBy(desc(schema.inspirationListItems.saved_at)),
+  recommendations: () =>
+    db
+      .select()
+      .from(schema.recommendations)
+      .orderBy(desc(schema.recommendations.created_at)),
+  achievements: () =>
+    db
+      .select()
+      .from(schema.achievements)
+      .orderBy(desc(schema.achievements.unlocked_at)),
 }
+
+// ---------------------------------------------------------------------------
+// HTTP helpers
+// ---------------------------------------------------------------------------
 
 function sendJson(response, statusCode, payload) {
   response.writeHead(statusCode, {
@@ -51,7 +80,107 @@ function sendJson(response, statusCode, payload) {
   response.end(JSON.stringify(payload))
 }
 
+function getClientIp(request) {
+  const forwardedFor = request.headers['x-forwarded-for']
+
+  if (typeof forwardedFor === 'string' && forwardedFor.trim()) {
+    return forwardedFor.split(',')[0].trim()
+  }
+
+  return request.socket.remoteAddress || 'unknown'
+}
+
+function pruneRateLimitBuckets(now) {
+  requestBuckets.forEach((bucket, key) => {
+    if (now - bucket.windowStartedAt >= RATE_LIMIT_WINDOW_MS) {
+      requestBuckets.delete(key)
+    }
+  })
+}
+
+function enforceRateLimit(request, response) {
+  const now = Date.now()
+  pruneRateLimitBuckets(now)
+  const clientIp = getClientIp(request)
+  const bucket = requestBuckets.get(clientIp)
+
+  if (!bucket || now - bucket.windowStartedAt >= RATE_LIMIT_WINDOW_MS) {
+    requestBuckets.set(clientIp, { count: 1, windowStartedAt: now })
+    return false
+  }
+
+  bucket.count += 1
+
+  if (bucket.count <= RATE_LIMIT_MAX_REQUESTS) {
+    return false
+  }
+
+  response.writeHead(429, {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Content-Type': 'application/json; charset=utf-8',
+    'Retry-After': String(Math.ceil(RATE_LIMIT_WINDOW_MS / 1000)),
+  })
+  response.end(
+    JSON.stringify({
+      error: 'Demasiadas peticiones seguidas. Espera un momento e inténtalo otra vez.',
+    }),
+  )
+  return true
+}
+
+async function readJsonBody(request) {
+  return new Promise((resolve, reject) => {
+    let body = ''
+    let totalBytes = 0
+
+    request.on('data', (chunk) => {
+      totalBytes += chunk.length
+
+      if (totalBytes > MAX_REQUEST_BODY_BYTES) {
+        reject(new Error('La petición es demasiado grande.'))
+        request.destroy()
+        return
+      }
+
+      body += chunk
+    })
+
+    request.on('end', () => {
+      try {
+        resolve(body ? JSON.parse(body) : {})
+      } catch {
+        reject(new Error('JSON inválido.'))
+      }
+    })
+
+    request.on('error', reject)
+  })
+}
+
+function ensureJsonRequest(request) {
+  const contentType = request.headers['content-type'] ?? ''
+
+  if (!String(contentType).toLowerCase().startsWith('application/json')) {
+    throw new Error('La petición debe usar Content-Type: application/json.')
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Data helpers
+// ---------------------------------------------------------------------------
+
 function parseJsonValue(value, fallback) {
+  if (value === null || value === undefined) {
+    return fallback
+  }
+
+  // PostgreSQL JSONB columns come back already parsed
+  if (typeof value === 'object') {
+    return value
+  }
+
   if (typeof value !== 'string' || value.trim() === '') {
     return fallback
   }
@@ -64,149 +193,28 @@ function parseJsonValue(value, fallback) {
 }
 
 function parseRestaurantRows(rows) {
-  return rows.map((restaurant) => ({
-    ...restaurant,
-    tags:
-      typeof restaurant.tags === 'string'
-        ? JSON.parse(restaurant.tags)
-        : restaurant.tags,
+  return rows.map((r) => ({
+    ...r,
+    tags: Array.isArray(r.tags) ? r.tags : parseJsonValue(r.tags, []),
   }))
 }
 
-async function runJsonQuery(sql) {
-  if (!existsSync(DB_PATH)) {
-    throw new Error(
-      `No existe la base SQLite en ${DB_PATH}. Ejecuta "npm run db:reset" antes de levantar la API.`,
-    )
-  }
-
-  const { stdout } = await execFileAsync(
-    'sqlite3',
-    ['-readonly', '-cmd', '.mode json', DB_PATH, sql],
-    {
-      maxBuffer: SQLITE_JSON_MAX_BUFFER_BYTES,
-    },
-  )
-
-  const trimmed = stdout.trim()
-  return trimmed ? JSON.parse(trimmed) : []
-}
-
-async function runWriteQuery(sql) {
-  if (!existsSync(DB_PATH)) {
-    throw new Error(
-      `No existe la base SQLite en ${DB_PATH}. Ejecuta "npm run db:reset" antes de levantar la API.`,
-    )
-  }
-
-  await new Promise((resolve, reject) => {
-    const child = spawn('sqlite3', ['-bail', DB_PATH], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-    })
-    let stderr = ''
-
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString()
-    })
-
-    child.on('error', reject)
-    child.on('close', (code) => {
-      if (code === 0) {
-        resolve()
-        return
-      }
-
-      reject(new Error(stderr.trim() || 'No se pudo ejecutar la escritura SQLite.'))
-    })
-
-    child.stdin.write(sql)
-    child.stdin.end()
-  })
-}
-
-function escapeSqlString(value) {
-  return String(value).replaceAll("'", "''")
-}
-
-function generateInviteCode() {
-  return randomUUID().replaceAll('-', '').slice(0, 6).toUpperCase()
-}
-
-function generatePublicShareToken() {
-  return randomUUID().replaceAll('-', '').slice(0, 16)
-}
-
-async function generateUniqueInviteCode() {
-  const groups = await runJsonQuery(ROUTE_QUERIES.groups)
-  const existingCodes = new Set(groups.map((group) => group.invite_code))
-
-  for (let attempt = 0; attempt < 25; attempt += 1) {
-    const inviteCode = generateInviteCode()
-    if (!existingCodes.has(inviteCode)) {
-      return inviteCode
-    }
-  }
-
-  throw new Error('No se pudo generar un código de invitación único.')
-}
-
-async function generateUniquePublicShareToken() {
-  const shareTokens = await runJsonQuery(ROUTE_QUERIES.publicShareTokens)
-  const existingTokens = new Set(shareTokens.map((token) => token.token))
-
-  for (let attempt = 0; attempt < 25; attempt += 1) {
-    const token = generatePublicShareToken()
-    if (!existingTokens.has(token)) {
-      return token
-    }
-  }
-
-  throw new Error('No se pudo generar un token público único.')
-}
-
 function calculateGeneralScore(entry) {
-  const values = [
-    entry.sabor,
-    entry.textura,
-    entry.presentacion,
-    entry.calidad_precio,
-  ].filter((value) => typeof value === 'number' && !Number.isNaN(value))
+  const values = [entry.sabor, entry.textura, entry.presentacion, entry.calidad_precio].filter(
+    (v) => typeof v === 'number' && !Number.isNaN(v),
+  )
 
   if (values.length === 0) {
     return null
   }
 
-  const total = values.reduce((sum, value) => sum + value, 0)
+  const total = values.reduce((sum, v) => sum + v, 0)
   return Number((total / values.length).toFixed(1))
-}
-
-function sqlValue(value) {
-  return value === null || value === undefined ? 'NULL' : `'${escapeSqlString(value)}'`
-}
-
-function numericSqlValue(value) {
-  return value === null || value === undefined ? 'NULL' : String(value)
 }
 
 function parseInteger(value, fallback) {
   const parsed = Number.parseInt(String(value ?? ''), 10)
   return Number.isFinite(parsed) ? parsed : fallback
-}
-
-function toBooleanFlag(value, fallback = 0) {
-  if (typeof value === 'boolean') {
-    return value ? 1 : 0
-  }
-
-  if (value === 1 || value === '1' || value === 'true') {
-    return 1
-  }
-
-  if (value === 0 || value === '0' || value === 'false') {
-    return 0
-  }
-
-  return fallback
 }
 
 function getRequiredString(value, label) {
@@ -239,15 +247,9 @@ function getCurrentUserIdFromSearchParams(searchParams) {
 
 function normalizeReactionType(value) {
   const reactionType = getRequiredString(value, 'el tipo de reacción')
-  const allowedTypes = [
-    'quiero_probar',
-    'ya_probe',
-    'que_hambre',
-    'mejorable',
-    'paso',
-  ]
+  const allowed = ['quiero_probar', 'ya_probe', 'que_hambre', 'mejorable', 'paso']
 
-  if (!allowedTypes.includes(reactionType)) {
+  if (!allowed.includes(reactionType)) {
     throw new Error('El tipo de reacción no es válido.')
   }
 
@@ -285,6 +287,18 @@ function sanitizeMentions(rawMentions) {
     }
 
     const label = getOptionalString(mention.label)
+
+    if (type === 'user' && !/^[a-zA-Z0-9-]+$/.test(value)) {
+      throw new Error(`La mención ${index + 1} de usuario no es válida.`)
+    }
+
+    if (type !== 'user' && /[<>]/.test(value)) {
+      throw new Error(`La mención ${index + 1} contiene caracteres no permitidos.`)
+    }
+
+    if (label && /[<>]/.test(label)) {
+      throw new Error(`La etiqueta de la mención ${index + 1} no es válida.`)
+    }
 
     return {
       type,
@@ -345,7 +359,9 @@ function parseFilters(searchParams) {
 
 function getWeekStart(dateInput) {
   const date = new Date(dateInput)
-  const normalized = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
+  const normalized = new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+  )
   const day = normalized.getUTCDay() || 7
   normalized.setUTCDate(normalized.getUTCDate() - day + 1)
   normalized.setUTCHours(0, 0, 0, 0)
@@ -353,14 +369,14 @@ function getWeekStart(dateInput) {
 }
 
 function calculateWeeklyStreak(dishEntries, userId) {
-  const userEntries = dishEntries.filter((entry) => entry.created_by_user_id === userId)
+  const userEntries = dishEntries.filter((e) => e.created_by_user_id === userId)
 
   if (userEntries.length === 0) {
     return 0
   }
 
   const entryWeeks = new Set(
-    userEntries.map((entry) => getWeekStart(entry.created_at ?? entry.fecha).toISOString()),
+    userEntries.map((e) => getWeekStart(e.created_at ?? e.fecha).toISOString()),
   )
   let streak = 0
   const cursor = getWeekStart(new Date().toISOString())
@@ -374,20 +390,21 @@ function calculateWeeklyStreak(dishEntries, userId) {
 }
 
 function buildUserLookup(users) {
-  return new Map(users.map((user) => [user.id, user]))
+  return new Map(users.map((u) => [u.id, u]))
 }
 
 function buildReactionSummary(reactions) {
   const summary = new Map()
 
-  reactions.forEach((reaction) => {
-    const currentCount = summary.get(reaction.reaction_type) ?? 0
-    summary.set(reaction.reaction_type, currentCount + 1)
+  reactions.forEach((r) => {
+    summary.set(r.reaction_type, (summary.get(r.reaction_type) ?? 0) + 1)
   })
 
   return Array.from(summary.entries())
-    .map(([reactionType, count]) => ({ reaction_type: reactionType, count }))
-    .sort((left, right) => right.count - left.count || left.reaction_type.localeCompare(right.reaction_type))
+    .map(([reaction_type, count]) => ({ reaction_type, count }))
+    .sort(
+      (a, b) => b.count - a.count || a.reaction_type.localeCompare(b.reaction_type),
+    )
 }
 
 function buildCommunityEntry(entry, context) {
@@ -408,12 +425,12 @@ function buildCommunityEntry(entry, context) {
     reactions_total: entryReactions.length,
     comments_count: entryComments.length,
     user_reaction:
-      entryReactions.find((reaction) => reaction.user_id === context.currentUserId) ?? null,
+      entryReactions.find((r) => r.user_id === context.currentUserId) ?? null,
   }
 }
 
 function ensureRecordExists(rows, id, label) {
-  const record = rows.find((row) => row.id === id)
+  const record = rows.find((r) => r.id === id)
 
   if (!record) {
     throw new Error(`No existe ${label}.`)
@@ -422,220 +439,156 @@ function ensureRecordExists(rows, id, label) {
   return record
 }
 
-async function readJsonBody(request) {
-  return new Promise((resolve, reject) => {
-    let body = ''
+function buildMutualFollowIds(follows, currentUserId) {
+  const followingIds = new Set(
+    follows
+      .filter((f) => f.follower_user_id === currentUserId)
+      .map((f) => f.followed_user_id),
+  )
+  const followerIds = new Set(
+    follows
+      .filter((f) => f.followed_user_id === currentUserId)
+      .map((f) => f.follower_user_id),
+  )
 
-    request.on('data', (chunk) => {
-      body += chunk
-
-      if (body.length > MAX_REQUEST_BODY_BYTES) {
-        reject(new Error('La petición es demasiado grande.'))
-      }
-    })
-
-    request.on('end', () => {
-      try {
-        resolve(body ? JSON.parse(body) : {})
-      } catch {
-        reject(new Error('JSON inválido.'))
-      }
-    })
-
-    request.on('error', reject)
-  })
+  return new Set(Array.from(followingIds).filter((id) => followerIds.has(id)))
 }
 
-async function createRestaurant(payload) {
-  const restaurants = parseRestaurantRows(await runJsonQuery(ROUTE_QUERIES.restaurants))
-  const normalizedPayload = validateRestaurantPayload(payload, restaurants)
+function buildSharedGroupIds(groupMembers, currentUserId, otherUserId) {
+  const currentGroupIds = new Set(
+    groupMembers
+      .filter((m) => m.user_id === currentUserId && m.status === 'active')
+      .map((m) => m.group_id),
+  )
 
-  const record = {
-    id: randomUUID(),
-    nombre: normalizedPayload.nombre,
-    nombre_normalizado: normalizedPayload.nombre_normalizado,
-    direccion_texto: normalizedPayload.direccion_texto,
-    google_maps_url:
-      normalizedPayload.google_maps_url ||
-      `https://maps.google.com/?q=${normalizedPayload.lat},${normalizedPayload.lng}`,
-    lat: normalizedPayload.lat,
-    lng: normalizedPayload.lng,
-    precio_rango: normalizedPayload.precio_rango,
-    tags: normalizedPayload.tags,
-    notas: normalizedPayload.notas,
-    created_at: new Date().toISOString(),
-    created_by_user_id: normalizedPayload.created_by_user_id,
-    cover_photo_url: normalizedPayload.cover_photo_url,
+  return new Set(
+    groupMembers
+      .filter(
+        (m) =>
+          m.user_id === otherUserId &&
+          m.status === 'active' &&
+          currentGroupIds.has(m.group_id),
+      )
+      .map((m) => m.group_id),
+  )
+}
+
+function generateInviteCode() {
+  return randomUUID().replaceAll('-', '').slice(0, 6).toUpperCase()
+}
+
+function generatePublicShareToken() {
+  return randomUUID().replaceAll('-', '').slice(0, 16)
+}
+
+async function generateUniqueInviteCode() {
+  const groups = await FETCH.groups()
+  const existingCodes = new Set(groups.map((g) => g.invite_code))
+
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    const code = generateInviteCode()
+
+    if (!existingCodes.has(code)) {
+      return code
+    }
   }
 
-  if (!record.created_by_user_id) {
+  throw new Error('No se pudo generar un código de invitación único.')
+}
+
+async function generateUniquePublicShareToken() {
+  const tokens = await FETCH.publicShareTokens()
+  const existingTokens = new Set(tokens.map((t) => t.token))
+
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    const token = generatePublicShareToken()
+
+    if (!existingTokens.has(token)) {
+      return token
+    }
+  }
+
+  throw new Error('No se pudo generar un token público único.')
+}
+
+// ---------------------------------------------------------------------------
+// CRUD operations (Drizzle)
+// ---------------------------------------------------------------------------
+
+async function createRestaurant(payload) {
+  const restaurants = parseRestaurantRows(await FETCH.restaurants())
+  const p = validateRestaurantPayload(payload, restaurants)
+
+  if (!p.created_by_user_id) {
     throw new Error('Falta el usuario creador del restaurante.')
   }
 
-  const sql = `
-    INSERT INTO restaurants (
-      id,
-      nombre,
-      nombre_normalizado,
-      direccion_texto,
-      google_maps_url,
-      lat,
-      lng,
-      precio_rango,
-      tags,
-      notas,
-      created_at,
-      created_by_user_id,
-      cover_photo_url
-    ) VALUES (
-      '${escapeSqlString(record.id)}',
-      '${escapeSqlString(record.nombre)}',
-      '${escapeSqlString(record.nombre_normalizado)}',
-      '${escapeSqlString(record.direccion_texto)}',
-      '${escapeSqlString(record.google_maps_url)}',
-      ${record.lat},
-      ${record.lng},
-      '${escapeSqlString(record.precio_rango)}',
-      '${escapeSqlString(JSON.stringify(record.tags))}',
-      '${escapeSqlString(record.notas)}',
-      '${escapeSqlString(record.created_at)}',
-      '${escapeSqlString(record.created_by_user_id)}',
-      '${escapeSqlString(record.cover_photo_url)}'
-    );
-  `
-
-  await runWriteQuery(sql)
-  return {
-    ...record,
-    tags: record.tags,
+  const record = {
+    id: randomUUID(),
+    nombre: p.nombre,
+    nombre_normalizado: p.nombre_normalizado,
+    direccion_texto: p.direccion_texto,
+    google_maps_url:
+      p.google_maps_url || `https://maps.google.com/?q=${p.lat},${p.lng}`,
+    lat: p.lat,
+    lng: p.lng,
+    precio_rango: p.precio_rango,
+    tags: p.tags,
+    notas: p.notas,
+    created_at: new Date().toISOString(),
+    created_by_user_id: p.created_by_user_id,
+    cover_photo_url: p.cover_photo_url,
   }
+
+  await db.insert(schema.restaurants).values(record)
+  return record
 }
 
 async function createGroup(payload) {
-  const normalizedPayload = validateGroupPayload(payload, {
-    requireCreator: true,
-  })
-  const createdByUserId = normalizedPayload.created_by_user_id
-
+  const p = validateGroupPayload(payload, { requireCreator: true })
   const createdAt = new Date().toISOString()
+
   const groupRecord = {
     id: randomUUID(),
-    nombre: normalizedPayload.nombre,
-    tipo: normalizedPayload.tipo,
-    visibility: normalizedPayload.visibility,
-    join_policy: normalizedPayload.join_policy,
+    nombre: p.nombre,
+    tipo: p.tipo,
+    visibility: p.visibility,
+    join_policy: p.join_policy,
     invite_code: await generateUniqueInviteCode(),
-    created_by_user_id: createdByUserId,
+    created_by_user_id: p.created_by_user_id,
     created_at: createdAt,
   }
+
   const groupMemberRecord = {
     id: randomUUID(),
     group_id: groupRecord.id,
-    user_id: createdByUserId,
+    user_id: p.created_by_user_id,
     role: 'owner',
     status: 'active',
     joined_at: createdAt,
   }
 
-  const sql = `
-    BEGIN TRANSACTION;
-    INSERT INTO "groups" (
-      id,
-      nombre,
-      tipo,
-      visibility,
-      join_policy,
-      invite_code,
-      created_by_user_id,
-      created_at
-    ) VALUES (
-      '${escapeSqlString(groupRecord.id)}',
-      '${escapeSqlString(groupRecord.nombre)}',
-      '${escapeSqlString(groupRecord.tipo)}',
-      '${escapeSqlString(groupRecord.visibility)}',
-      '${escapeSqlString(groupRecord.join_policy)}',
-      '${escapeSqlString(groupRecord.invite_code)}',
-      '${escapeSqlString(groupRecord.created_by_user_id)}',
-      '${escapeSqlString(groupRecord.created_at)}'
-    );
-    INSERT INTO group_members (
-      id,
-      group_id,
-      user_id,
-      role,
-      status,
-      joined_at
-    ) VALUES (
-      '${escapeSqlString(groupMemberRecord.id)}',
-      '${escapeSqlString(groupMemberRecord.group_id)}',
-      '${escapeSqlString(groupMemberRecord.user_id)}',
-      '${escapeSqlString(groupMemberRecord.role)}',
-      '${escapeSqlString(groupMemberRecord.status)}',
-      '${escapeSqlString(groupMemberRecord.joined_at)}'
-    );
-    COMMIT;
-  `
+  await db.transaction(async (tx) => {
+    await tx.insert(schema.groups).values(groupRecord)
+    await tx.insert(schema.groupMembers).values(groupMemberRecord)
+  })
 
-  await runWriteQuery(sql)
-
-  return {
-    group: groupRecord,
-    groupMember: groupMemberRecord,
-  }
+  return { group: groupRecord, groupMember: groupMemberRecord }
 }
 
 async function createCategory(payload) {
-  const existingCategories = await runJsonQuery(ROUTE_QUERIES.categories)
-  const normalizedPayload = validateCategoryPayload(payload, existingCategories)
-
-  const record = {
-    id: randomUUID(),
-    ...normalizedPayload,
-  }
-
-  const sql = `
-    INSERT INTO categories (id, nombre, icono, scope, created_by_user_id)
-    VALUES (
-      '${escapeSqlString(record.id)}',
-      '${escapeSqlString(record.nombre)}',
-      '${escapeSqlString(record.icono)}',
-      '${escapeSqlString(record.scope)}',
-      ${sqlValue(record.created_by_user_id)}
-    );
-  `
-
-  await runWriteQuery(sql)
+  const existing = await FETCH.categories()
+  const p = validateCategoryPayload(payload, existing)
+  const record = { id: randomUUID(), ...p }
+  await db.insert(schema.categories).values(record)
   return record
 }
 
 async function createDishType(payload) {
-  const existingDishTypes = await runJsonQuery(ROUTE_QUERIES.dishTypes)
-  const normalizedPayload = validateDishTypePayload(payload, existingDishTypes)
-
-  const record = {
-    id: randomUUID(),
-    ...normalizedPayload,
-  }
-
-  const sql = `
-    INSERT INTO dish_types (
-      id,
-      categoria_id,
-      nombre,
-      alias,
-      scope,
-      created_by_user_id
-    ) VALUES (
-      '${escapeSqlString(record.id)}',
-      '${escapeSqlString(record.categoria_id)}',
-      '${escapeSqlString(record.nombre)}',
-      ${sqlValue(record.alias)},
-      '${escapeSqlString(record.scope)}',
-      ${sqlValue(record.created_by_user_id)}
-    );
-  `
-
-  await runWriteQuery(sql)
+  const existing = await FETCH.dishTypes()
+  const p = validateDishTypePayload(payload, existing)
+  const record = { id: randomUUID(), ...p }
+  await db.insert(schema.dishTypes).values(record)
   return record
 }
 
@@ -668,321 +621,190 @@ async function createPublicShareToken(payload) {
     token: await generateUniquePublicShareToken(),
     context,
     ranking_type: rankingType,
-    filters_json: JSON.stringify(filters),
+    filters_json: filters,
     group_id: groupId,
     created_by_user_id: createdByUserId,
     created_at: new Date().toISOString(),
     expires_at: null,
   }
 
-  const sql = `
-    INSERT INTO public_share_tokens (
-      id,
-      token,
-      context,
-      ranking_type,
-      filters_json,
-      group_id,
-      created_by_user_id,
-      created_at,
-      expires_at
-    ) VALUES (
-      '${escapeSqlString(record.id)}',
-      '${escapeSqlString(record.token)}',
-      '${escapeSqlString(record.context)}',
-      '${escapeSqlString(record.ranking_type)}',
-      '${escapeSqlString(record.filters_json)}',
-      ${record.group_id ? `'${escapeSqlString(record.group_id)}'` : 'NULL'},
-      '${escapeSqlString(record.created_by_user_id)}',
-      '${escapeSqlString(record.created_at)}',
-      NULL
-    );
-  `
-
-  await runWriteQuery(sql)
-
-  return {
-    ...record,
-    filters: filters,
-  }
+  await db.insert(schema.publicShareTokens).values(record)
+  return { ...record, filters }
 }
 
 async function createDishEntry(payload) {
-  const dishEntries = await runJsonQuery(ROUTE_QUERIES.dishEntries)
-  const normalizedPayload = validateDishEntryPayload(payload, dishEntries)
+  const existing = await FETCH.dishEntries()
+  const p = validateDishEntryPayload(payload, existing)
 
-  const record = {
+  const { puntuacion_general: _computed, ...insertValues } = {
     id: randomUUID(),
-    ...normalizedPayload,
+    ...p,
     created_at: new Date().toISOString(),
   }
 
-  const sql = `
-    INSERT INTO dish_entries (
-      id,
-      restaurant_id,
-      categoria_id,
-      tipo_plato_id,
-      nombre_plato,
-      sabor,
-      textura,
-      presentacion,
-      calidad_precio,
-      precio_plato,
-      notas,
-      fecha,
-      foto_url,
-      created_by_user_id,
-      group_id,
-      visibility,
-      created_at
-    ) VALUES (
-      ${sqlValue(record.id)},
-      ${sqlValue(record.restaurant_id)},
-      ${sqlValue(record.categoria_id)},
-      ${sqlValue(record.tipo_plato_id)},
-      ${sqlValue(record.nombre_plato)},
-      ${numericSqlValue(record.sabor)},
-      ${numericSqlValue(record.textura)},
-      ${numericSqlValue(record.presentacion)},
-      ${numericSqlValue(record.calidad_precio)},
-      ${numericSqlValue(record.precio_plato)},
-      ${sqlValue(record.notas)},
-      ${sqlValue(record.fecha)},
-      ${sqlValue(record.foto_url)},
-      ${sqlValue(record.created_by_user_id)},
-      ${sqlValue(record.group_id)},
-      ${sqlValue(record.visibility)},
-      ${sqlValue(record.created_at)}
-    );
-  `
+  const [inserted] = await db
+    .insert(schema.dishEntries)
+    .values(insertValues)
+    .returning()
 
-  await runWriteQuery(sql)
-
-  return {
-    ...record,
-    puntuacion_general: calculateGeneralScore(record),
+  return inserted ?? {
+    ...insertValues,
+    puntuacion_general: calculateGeneralScore(insertValues),
   }
 }
 
 async function updateUser(userId, payload) {
-  const users = await runJsonQuery(ROUTE_QUERIES.users)
+  const users = await FETCH.users()
   ensureRecordExists(users, userId, 'el usuario solicitado')
-  const normalizedPayload = validateUserPayload(payload)
+  const p = validateUserPayload(payload)
 
-  const sql = `
-    UPDATE users
-    SET
-      nombre = '${escapeSqlString(normalizedPayload.nombre)}',
-      avatar_url = ${sqlValue(normalizedPayload.avatar_url)}
-    WHERE id = '${escapeSqlString(userId)}';
-  `
+  const [updated] = await db
+    .update(schema.users)
+    .set({ nombre: p.nombre, avatar_url: p.avatar_url })
+    .where(eq(schema.users.id, userId))
+    .returning()
 
-  await runWriteQuery(sql)
-  return ensureRecordExists(await runJsonQuery(ROUTE_QUERIES.users), userId, 'el usuario actualizado')
+  return updated
 }
 
 async function updateGroup(groupId, payload) {
-  const groups = await runJsonQuery(ROUTE_QUERIES.groups)
-  const currentGroup = ensureRecordExists(groups, groupId, 'el grupo solicitado')
-  const normalizedPayload = validateGroupPayload({
-    ...currentGroup,
-    ...payload,
-    created_by_user_id: currentGroup.created_by_user_id,
-  })
+  const groups = await FETCH.groups()
+  const current = ensureRecordExists(groups, groupId, 'el grupo solicitado')
+  const p = validateGroupPayload({ ...current, ...payload, created_by_user_id: current.created_by_user_id })
 
-  const sql = `
-    UPDATE "groups"
-    SET
-      nombre = '${escapeSqlString(normalizedPayload.nombre)}',
-      tipo = '${escapeSqlString(normalizedPayload.tipo)}',
-      visibility = '${escapeSqlString(normalizedPayload.visibility)}',
-      join_policy = '${escapeSqlString(normalizedPayload.join_policy)}'
-    WHERE id = '${escapeSqlString(groupId)}';
-  `
+  const [updated] = await db
+    .update(schema.groups)
+    .set({ nombre: p.nombre, tipo: p.tipo, visibility: p.visibility, join_policy: p.join_policy })
+    .where(eq(schema.groups.id, groupId))
+    .returning()
 
-  await runWriteQuery(sql)
-  return ensureRecordExists(await runJsonQuery(ROUTE_QUERIES.groups), groupId, 'el grupo actualizado')
+  return updated
 }
 
 async function updateRestaurant(restaurantId, payload) {
-  const restaurants = parseRestaurantRows(await runJsonQuery(ROUTE_QUERIES.restaurants))
-  const currentRestaurant = ensureRecordExists(
-    restaurants,
-    restaurantId,
-    'el restaurante solicitado',
-  )
-  const normalizedPayload = validateRestaurantPayload(
-    {
-      ...currentRestaurant,
-      ...payload,
-      created_by_user_id: currentRestaurant.created_by_user_id,
-    },
+  const restaurants = parseRestaurantRows(await FETCH.restaurants())
+  const current = ensureRecordExists(restaurants, restaurantId, 'el restaurante solicitado')
+  const p = validateRestaurantPayload(
+    { ...current, ...payload, created_by_user_id: current.created_by_user_id },
     restaurants,
     { excludeId: restaurantId },
   )
 
-  const sql = `
-    UPDATE restaurants
-    SET
-      nombre = '${escapeSqlString(normalizedPayload.nombre)}',
-      nombre_normalizado = '${escapeSqlString(normalizedPayload.nombre_normalizado)}',
-      direccion_texto = '${escapeSqlString(normalizedPayload.direccion_texto)}',
-      google_maps_url = '${escapeSqlString(normalizedPayload.google_maps_url || `https://maps.google.com/?q=${normalizedPayload.lat},${normalizedPayload.lng}`)}',
-      lat = ${normalizedPayload.lat},
-      lng = ${normalizedPayload.lng},
-      precio_rango = '${escapeSqlString(normalizedPayload.precio_rango)}',
-      tags = '${escapeSqlString(JSON.stringify(normalizedPayload.tags))}',
-      notas = '${escapeSqlString(normalizedPayload.notas)}',
-      cover_photo_url = '${escapeSqlString(normalizedPayload.cover_photo_url)}'
-    WHERE id = '${escapeSqlString(restaurantId)}';
-  `
+  const [updated] = await db
+    .update(schema.restaurants)
+    .set({
+      nombre: p.nombre,
+      nombre_normalizado: p.nombre_normalizado,
+      direccion_texto: p.direccion_texto,
+      google_maps_url:
+        p.google_maps_url || `https://maps.google.com/?q=${p.lat},${p.lng}`,
+      lat: p.lat,
+      lng: p.lng,
+      precio_rango: p.precio_rango,
+      tags: p.tags,
+      notas: p.notas,
+      cover_photo_url: p.cover_photo_url,
+    })
+    .where(eq(schema.restaurants.id, restaurantId))
+    .returning()
 
-  await runWriteQuery(sql)
-  const updatedRestaurants = parseRestaurantRows(await runJsonQuery(ROUTE_QUERIES.restaurants))
-  return ensureRecordExists(updatedRestaurants, restaurantId, 'el restaurante actualizado')
+  return updated
 }
 
 async function updateCategory(categoryId, payload) {
-  const categories = await runJsonQuery(ROUTE_QUERIES.categories)
-  const currentCategory = ensureRecordExists(categories, categoryId, 'la categoría solicitada')
-  const normalizedPayload = validateCategoryPayload(
-    {
-      ...currentCategory,
-      ...payload,
-      created_by_user_id: currentCategory.created_by_user_id,
-    },
+  const categories = await FETCH.categories()
+  const current = ensureRecordExists(categories, categoryId, 'la categoría solicitada')
+  const p = validateCategoryPayload(
+    { ...current, ...payload, created_by_user_id: current.created_by_user_id },
     categories,
     { excludeId: categoryId },
   )
 
-  const sql = `
-    UPDATE categories
-    SET
-      nombre = '${escapeSqlString(normalizedPayload.nombre)}',
-      icono = '${escapeSqlString(normalizedPayload.icono)}',
-      scope = '${escapeSqlString(normalizedPayload.scope)}'
-    WHERE id = '${escapeSqlString(categoryId)}';
-  `
+  const [updated] = await db
+    .update(schema.categories)
+    .set({ nombre: p.nombre, icono: p.icono, scope: p.scope })
+    .where(eq(schema.categories.id, categoryId))
+    .returning()
 
-  await runWriteQuery(sql)
-  return ensureRecordExists(await runJsonQuery(ROUTE_QUERIES.categories), categoryId, 'la categoría actualizada')
+  return updated
 }
 
 async function updateDishType(dishTypeId, payload) {
-  const dishTypes = await runJsonQuery(ROUTE_QUERIES.dishTypes)
-  const currentDishType = ensureRecordExists(
-    dishTypes,
-    dishTypeId,
-    'el tipo de plato solicitado',
-  )
-  const normalizedPayload = validateDishTypePayload(
-    {
-      ...currentDishType,
-      ...payload,
-      created_by_user_id: currentDishType.created_by_user_id,
-    },
+  const dishTypes = await FETCH.dishTypes()
+  const current = ensureRecordExists(dishTypes, dishTypeId, 'el tipo de plato solicitado')
+  const p = validateDishTypePayload(
+    { ...current, ...payload, created_by_user_id: current.created_by_user_id },
     dishTypes,
     { excludeId: dishTypeId },
   )
 
-  const sql = `
-    UPDATE dish_types
-    SET
-      categoria_id = '${escapeSqlString(normalizedPayload.categoria_id)}',
-      nombre = '${escapeSqlString(normalizedPayload.nombre)}',
-      alias = ${sqlValue(normalizedPayload.alias)},
-      scope = '${escapeSqlString(normalizedPayload.scope)}'
-    WHERE id = '${escapeSqlString(dishTypeId)}';
-  `
+  const [updated] = await db
+    .update(schema.dishTypes)
+    .set({ categoria_id: p.categoria_id, nombre: p.nombre, alias: p.alias, scope: p.scope })
+    .where(eq(schema.dishTypes.id, dishTypeId))
+    .returning()
 
-  await runWriteQuery(sql)
-  return ensureRecordExists(await runJsonQuery(ROUTE_QUERIES.dishTypes), dishTypeId, 'el tipo de plato actualizado')
+  return updated
 }
 
 async function updateDishEntry(dishEntryId, payload) {
-  const dishEntries = await runJsonQuery(ROUTE_QUERIES.dishEntries)
-  const currentDishEntry = ensureRecordExists(
-    dishEntries,
-    dishEntryId,
-    'la valoración solicitada',
-  )
-  const normalizedPayload = validateDishEntryPayload(
-    {
-      ...currentDishEntry,
-      ...payload,
-      created_by_user_id: currentDishEntry.created_by_user_id,
-    },
+  const dishEntries = await FETCH.dishEntries()
+  const current = ensureRecordExists(dishEntries, dishEntryId, 'la valoración solicitada')
+  const p = validateDishEntryPayload(
+    { ...current, ...payload, created_by_user_id: current.created_by_user_id },
     dishEntries,
     { excludeId: dishEntryId },
   )
 
-  const sql = `
-    UPDATE dish_entries
-    SET
-      restaurant_id = ${sqlValue(normalizedPayload.restaurant_id)},
-      categoria_id = ${sqlValue(normalizedPayload.categoria_id)},
-      tipo_plato_id = ${sqlValue(normalizedPayload.tipo_plato_id)},
-      nombre_plato = ${sqlValue(normalizedPayload.nombre_plato)},
-      sabor = ${numericSqlValue(normalizedPayload.sabor)},
-      textura = ${numericSqlValue(normalizedPayload.textura)},
-      presentacion = ${numericSqlValue(normalizedPayload.presentacion)},
-      calidad_precio = ${numericSqlValue(normalizedPayload.calidad_precio)},
-      precio_plato = ${numericSqlValue(normalizedPayload.precio_plato)},
-      notas = ${sqlValue(normalizedPayload.notas)},
-      fecha = ${sqlValue(normalizedPayload.fecha)},
-      foto_url = ${sqlValue(normalizedPayload.foto_url)},
-      group_id = ${sqlValue(normalizedPayload.group_id)},
-      visibility = ${sqlValue(normalizedPayload.visibility)}
-    WHERE id = ${sqlValue(dishEntryId)};
-  `
+  const [updated] = await db
+    .update(schema.dishEntries)
+    .set({
+      restaurant_id: p.restaurant_id,
+      categoria_id: p.categoria_id,
+      tipo_plato_id: p.tipo_plato_id,
+      nombre_plato: p.nombre_plato,
+      sabor: p.sabor,
+      textura: p.textura,
+      presentacion: p.presentacion,
+      calidad_precio: p.calidad_precio,
+      precio_plato: p.precio_plato,
+      notas: p.notas,
+      fecha: p.fecha,
+      foto_url: p.foto_url,
+      group_id: p.group_id,
+      visibility: p.visibility,
+    })
+    .where(eq(schema.dishEntries.id, dishEntryId))
+    .returning()
 
-  await runWriteQuery(sql)
-  const updatedDishEntry = ensureRecordExists(
-    await runJsonQuery(ROUTE_QUERIES.dishEntries),
-    dishEntryId,
-    'la valoración actualizada',
-  )
-
-  return {
-    ...updatedDishEntry,
-    puntuacion_general:
-      typeof updatedDishEntry.puntuacion_general === 'number'
-        ? updatedDishEntry.puntuacion_general
-        : calculateGeneralScore(updatedDishEntry),
-  }
+  return updated ?? { ...current, ...p, puntuacion_general: calculateGeneralScore(p) }
 }
 
 async function getFollowState(userId) {
-  const [users, follows] = await Promise.all([
-    runJsonQuery(ROUTE_QUERIES.users),
-    runJsonQuery(ROUTE_QUERIES.follows),
-  ])
-
+  const [users, follows] = await Promise.all([FETCH.users(), FETCH.follows()])
   ensureRecordExists(users, userId, 'el usuario solicitado')
   const usersById = buildUserLookup(users)
-  const following = follows.filter((follow) => follow.follower_user_id === userId)
-  const followers = follows.filter((follow) => follow.followed_user_id === userId)
-  const followingIds = new Set(following.map((follow) => follow.followed_user_id))
-  const followerIds = new Set(followers.map((follow) => follow.follower_user_id))
-  const mutualIds = Array.from(followingIds).filter((followedUserId) => followerIds.has(followedUserId))
+  const following = follows.filter((f) => f.follower_user_id === userId)
+  const followers = follows.filter((f) => f.followed_user_id === userId)
+  const followingIds = new Set(following.map((f) => f.followed_user_id))
+  const followerIds = new Set(followers.map((f) => f.follower_user_id))
+  const mutualIds = Array.from(followingIds).filter((id) => followerIds.has(id))
 
   return {
     follows: follows.filter(
-      (follow) =>
-        follow.follower_user_id === userId || follow.followed_user_id === userId,
+      (f) => f.follower_user_id === userId || f.followed_user_id === userId,
     ),
-    following: following.map((follow) => ({
-      ...follow,
-      user: usersById.get(follow.followed_user_id) ?? null,
-      id: follow.followed_user_id,
+    following: following.map((f) => ({
+      ...f,
+      user: usersById.get(f.followed_user_id) ?? null,
+      id: f.followed_user_id,
     })),
-    followers: followers.map((follow) => ({
-      ...follow,
-      user: usersById.get(follow.follower_user_id) ?? null,
-      id: follow.follower_user_id,
+    followers: followers.map((f) => ({
+      ...f,
+      user: usersById.get(f.follower_user_id) ?? null,
+      id: f.follower_user_id,
     })),
-    mutuals: mutualIds.map((mutualUserId) => usersById.get(mutualUserId)).filter(Boolean),
+    mutuals: mutualIds.map((id) => usersById.get(id)).filter(Boolean),
   }
 }
 
@@ -991,31 +813,22 @@ async function createFollow(payload) {
     payload.follower_user_id ?? payload.current_user_id ?? payload.user_id,
     'el follower_user_id',
   )
-  const followedUserId = getRequiredString(
-    payload.followed_user_id,
-    'el followed_user_id',
-  )
+  const followedUserId = getRequiredString(payload.followed_user_id, 'el followed_user_id')
 
   if (followerUserId === followedUserId) {
     throw new Error('No puedes seguirte a ti mismo.')
   }
 
-  const [users, follows] = await Promise.all([
-    runJsonQuery(ROUTE_QUERIES.users),
-    runJsonQuery(ROUTE_QUERIES.follows),
-  ])
-
+  const [users, follows] = await Promise.all([FETCH.users(), FETCH.follows()])
   ensureRecordExists(users, followerUserId, 'el usuario seguidor')
   ensureRecordExists(users, followedUserId, 'el usuario a seguir')
 
-  const existingFollow = follows.find(
-    (follow) =>
-      follow.follower_user_id === followerUserId &&
-      follow.followed_user_id === followedUserId,
+  const existing = follows.find(
+    (f) => f.follower_user_id === followerUserId && f.followed_user_id === followedUserId,
   )
 
-  if (existingFollow) {
-    return existingFollow
+  if (existing) {
+    return existing
   }
 
   const record = {
@@ -1024,38 +837,30 @@ async function createFollow(payload) {
     created_at: new Date().toISOString(),
   }
 
-  const sql = `
-    INSERT INTO follows (follower_user_id, followed_user_id, created_at)
-    VALUES (
-      ${sqlValue(record.follower_user_id)},
-      ${sqlValue(record.followed_user_id)},
-      ${sqlValue(record.created_at)}
-    );
-  `
-
-  await runWriteQuery(sql)
+  await db.insert(schema.follows).values(record)
   return record
 }
 
 async function deleteFollow(currentUserId, followedUserId) {
-  const follows = await runJsonQuery(ROUTE_QUERIES.follows)
+  const follows = await FETCH.follows()
   const follow = follows.find(
-    (item) =>
-      item.follower_user_id === currentUserId &&
-      item.followed_user_id === followedUserId,
+    (f) =>
+      f.follower_user_id === currentUserId && f.followed_user_id === followedUserId,
   )
 
   if (!follow) {
     throw new Error('No existe ese follow.')
   }
 
-  const sql = `
-    DELETE FROM follows
-    WHERE follower_user_id = ${sqlValue(currentUserId)}
-      AND followed_user_id = ${sqlValue(followedUserId)};
-  `
+  await db
+    .delete(schema.follows)
+    .where(
+      and(
+        eq(schema.follows.follower_user_id, currentUserId),
+        eq(schema.follows.followed_user_id, followedUserId),
+      ),
+    )
 
-  await runWriteQuery(sql)
   return { ok: true }
 }
 
@@ -1073,107 +878,100 @@ async function getCommunityFeed(searchParams) {
     dishTypes,
     dishEntries,
     follows,
+    groupMembers,
     reactions,
     comments,
   ] = await Promise.all([
-    runJsonQuery(ROUTE_QUERIES.users),
-    runJsonQuery(ROUTE_QUERIES.restaurants),
-    runJsonQuery(ROUTE_QUERIES.categories),
-    runJsonQuery(ROUTE_QUERIES.dishTypes),
-    runJsonQuery(ROUTE_QUERIES.dishEntries),
-    runJsonQuery(ROUTE_QUERIES.follows),
-    runJsonQuery(ROUTE_QUERIES.reactions),
-    runJsonQuery(ROUTE_QUERIES.comments),
+    FETCH.users(),
+    FETCH.restaurants(),
+    FETCH.categories(),
+    FETCH.dishTypes(),
+    FETCH.dishEntries(),
+    FETCH.follows(),
+    FETCH.groupMembers(),
+    FETCH.reactions(),
+    FETCH.comments(),
   ])
 
   ensureRecordExists(users, currentUserId, 'el usuario actual')
-
-  const followingIds = new Set(
-    follows
-      .filter((follow) => follow.follower_user_id === currentUserId)
-      .map((follow) => follow.followed_user_id),
+  const mutualFollowIds = buildMutualFollowIds(follows, currentUserId)
+  const restaurantsById = new Map(
+    parseRestaurantRows(restaurants).map((r) => [r.id, r]),
   )
-  const followerIds = new Set(
-    follows
-      .filter((follow) => follow.followed_user_id === currentUserId)
-      .map((follow) => follow.follower_user_id),
-  )
-  const mutualFollowIds = new Set(
-    Array.from(followingIds).filter((followedUserId) => followerIds.has(followedUserId)),
-  )
-  const restaurantsById = new Map(parseRestaurantRows(restaurants).map((restaurant) => [restaurant.id, restaurant]))
-  const categoriesById = new Map(categories.map((category) => [category.id, category]))
-  const dishTypesById = new Map(dishTypes.map((dishType) => [dishType.id, dishType]))
+  const categoriesById = new Map(categories.map((c) => [c.id, c]))
+  const dishTypesById = new Map(dishTypes.map((d) => [d.id, d]))
   const usersById = buildUserLookup(users)
   const reactionsByEntryId = new Map()
   const commentsByEntryId = new Map()
 
-  reactions.forEach((reaction) => {
-    const entryReactions = reactionsByEntryId.get(reaction.dish_entry_id) ?? []
-    entryReactions.push(reaction)
-    reactionsByEntryId.set(reaction.dish_entry_id, entryReactions)
+  reactions.forEach((r) => {
+    const list = reactionsByEntryId.get(r.dish_entry_id) ?? []
+    list.push(r)
+    reactionsByEntryId.set(r.dish_entry_id, list)
   })
 
-  comments.forEach((comment) => {
-    const entryComments = commentsByEntryId.get(comment.dish_entry_id) ?? []
-    entryComments.push({
-      ...comment,
-      mentions: parseJsonValue(comment.mentions, []),
-    })
-    commentsByEntryId.set(comment.dish_entry_id, entryComments)
+  comments.forEach((c) => {
+    const list = commentsByEntryId.get(c.dish_entry_id) ?? []
+    list.push({ ...c, mentions: parseJsonValue(c.mentions, []) })
+    commentsByEntryId.set(c.dish_entry_id, list)
   })
 
-  let scopedEntries = dishEntries.filter((entry) => entry.created_by_user_id !== currentUserId)
+  let scoped = dishEntries.filter((e) => e.created_by_user_id !== currentUserId)
 
   if (tab === 'amigos') {
-    scopedEntries = scopedEntries.filter(
-      (entry) =>
-        mutualFollowIds.has(entry.created_by_user_id) && entry.visibility !== 'private',
-    )
+    scoped = scoped.filter((e) => {
+      if (!mutualFollowIds.has(e.created_by_user_id)) return false
+      if (e.visibility === 'public') return true
+
+      if (e.visibility !== 'group' || !e.group_id) return false
+
+      return buildSharedGroupIds(groupMembers, currentUserId, e.created_by_user_id).has(
+        e.group_id,
+      )
+    })
   } else {
-    scopedEntries = scopedEntries.filter((entry) => entry.visibility === 'public')
+    scoped = scoped.filter((e) => e.visibility === 'public')
   }
 
   if (filters.categoryIds.length > 0) {
-    scopedEntries = scopedEntries.filter((entry) => filters.categoryIds.includes(entry.categoria_id))
+    scoped = scoped.filter((e) => filters.categoryIds.includes(e.categoria_id))
   }
 
   if (filters.dishTypeIds.length > 0) {
-    scopedEntries = scopedEntries.filter((entry) => filters.dishTypeIds.includes(entry.tipo_plato_id))
+    scoped = scoped.filter((e) => filters.dishTypeIds.includes(e.tipo_plato_id))
   }
 
   if (filters.priceRange.length > 0) {
-    scopedEntries = scopedEntries.filter((entry) => {
-      const restaurant = restaurantsById.get(entry.restaurant_id)
-      return restaurant && filters.priceRange.includes(restaurant.precio_rango)
+    scoped = scoped.filter((e) => {
+      const r = restaurantsById.get(e.restaurant_id)
+      return r && filters.priceRange.includes(r.precio_rango)
     })
   }
 
   if (typeof filters.minScore === 'number' && !Number.isNaN(filters.minScore)) {
-    scopedEntries = scopedEntries.filter(
-      (entry) => Number(entry.puntuacion_general ?? 0) >= filters.minScore,
+    scoped = scoped.filter(
+      (e) => Number(e.puntuacion_general ?? 0) >= filters.minScore,
     )
   }
 
   if (filters.dateFrom) {
-    scopedEntries = scopedEntries.filter((entry) => String(entry.fecha) >= filters.dateFrom)
+    scoped = scoped.filter((e) => String(e.fecha) >= filters.dateFrom)
   }
 
   if (filters.dateTo) {
-    scopedEntries = scopedEntries.filter((entry) => String(entry.fecha) <= filters.dateTo)
+    scoped = scoped.filter((e) => String(e.fecha) <= filters.dateTo)
   }
 
-  scopedEntries.sort((left, right) => {
-    const leftTime = new Date(left.created_at ?? left.fecha).getTime()
-    const rightTime = new Date(right.created_at ?? right.fecha).getTime()
-    return rightTime - leftTime
+  scoped.sort((a, b) => {
+    const at = new Date(a.created_at ?? a.fecha).getTime()
+    const bt = new Date(b.created_at ?? b.fecha).getTime()
+    return bt - at
   })
 
-  const totalItems = scopedEntries.length
+  const totalItems = scoped.length
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
   const currentPage = Math.min(page, totalPages)
   const offset = (currentPage - 1) * pageSize
-  const paginatedEntries = scopedEntries.slice(offset, offset + pageSize)
   const context = {
     currentUserId,
     usersById,
@@ -1191,7 +989,9 @@ async function getCommunityFeed(searchParams) {
     total_items: totalItems,
     total_pages: totalPages,
     filters,
-    entries: paginatedEntries.map((entry) => buildCommunityEntry(entry, context)),
+    entries: scoped
+      .slice(offset, offset + pageSize)
+      .map((e) => buildCommunityEntry(e, context)),
   }
 }
 
@@ -1200,77 +1000,52 @@ async function addOrUpdateReaction(payload) {
   const userId = getRequiredString(payload.user_id, 'el user_id')
   const reactionType = normalizeReactionType(payload.reaction_type)
 
-  const [dishEntries, users, reactions] = await Promise.all([
-    runJsonQuery(ROUTE_QUERIES.dishEntries),
-    runJsonQuery(ROUTE_QUERIES.users),
-    runJsonQuery(ROUTE_QUERIES.reactions),
-  ])
-
+  const [dishEntries, users] = await Promise.all([FETCH.dishEntries(), FETCH.users()])
   ensureRecordExists(dishEntries, dishEntryId, 'la valoración')
   ensureRecordExists(users, userId, 'el usuario')
 
-  const existingReaction = reactions.find(
-    (reaction) => reaction.dish_entry_id === dishEntryId && reaction.user_id === userId,
-  )
-  const createdAt = existingReaction?.created_at ?? new Date().toISOString()
   const record = {
-    id: existingReaction?.id ?? randomUUID(),
+    id: randomUUID(),
     dish_entry_id: dishEntryId,
     user_id: userId,
     reaction_type: reactionType,
-    created_at: createdAt,
+    created_at: new Date().toISOString(),
   }
 
-  const sql = existingReaction
-    ? `
-      UPDATE reactions
-      SET reaction_type = ${sqlValue(record.reaction_type)}
-      WHERE id = ${sqlValue(record.id)};
-    `
-    : `
-      INSERT INTO reactions (id, dish_entry_id, user_id, reaction_type, created_at)
-      VALUES (
-        ${sqlValue(record.id)},
-        ${sqlValue(record.dish_entry_id)},
-        ${sqlValue(record.user_id)},
-        ${sqlValue(record.reaction_type)},
-        ${sqlValue(record.created_at)}
-      );
-    `
+  await db
+    .insert(schema.reactions)
+    .values(record)
+    .onConflictDoUpdate({
+      target: [schema.reactions.dish_entry_id, schema.reactions.user_id],
+      set: { reaction_type: reactionType },
+    })
 
-  await runWriteQuery(sql)
   return record
 }
 
 async function deleteReaction(reactionId) {
-  const reactions = await runJsonQuery(ROUTE_QUERIES.reactions)
+  const reactions = await FETCH.reactions()
   ensureRecordExists(reactions, reactionId, 'la reacción')
-
-  const sql = `
-    DELETE FROM reactions
-    WHERE id = ${sqlValue(reactionId)};
-  `
-
-  await runWriteQuery(sql)
+  await db.delete(schema.reactions).where(eq(schema.reactions.id, reactionId))
   return { ok: true }
 }
 
 async function getCommentsForEntry(entryId) {
   const [comments, users, dishEntries] = await Promise.all([
-    runJsonQuery(ROUTE_QUERIES.comments),
-    runJsonQuery(ROUTE_QUERIES.users),
-    runJsonQuery(ROUTE_QUERIES.dishEntries),
+    FETCH.comments(),
+    FETCH.users(),
+    FETCH.dishEntries(),
   ])
 
   ensureRecordExists(dishEntries, entryId, 'la valoración')
   const usersById = buildUserLookup(users)
 
   return comments
-    .filter((comment) => comment.dish_entry_id === entryId)
-    .map((comment) => ({
-      ...comment,
-      mentions: parseJsonValue(comment.mentions, []),
-      user: usersById.get(comment.user_id) ?? null,
+    .filter((c) => c.dish_entry_id === entryId)
+    .map((c) => ({
+      ...c,
+      mentions: parseJsonValue(c.mentions, []),
+      user: usersById.get(c.user_id) ?? null,
     }))
 }
 
@@ -1284,11 +1059,7 @@ async function createComment(payload) {
     throw new Error('El comentario no puede superar los 500 caracteres.')
   }
 
-  const [dishEntries, users] = await Promise.all([
-    runJsonQuery(ROUTE_QUERIES.dishEntries),
-    runJsonQuery(ROUTE_QUERIES.users),
-  ])
-
+  const [dishEntries, users] = await Promise.all([FETCH.dishEntries(), FETCH.users()])
   ensureRecordExists(dishEntries, dishEntryId, 'la valoración')
   ensureRecordExists(users, userId, 'el usuario')
 
@@ -1301,19 +1072,8 @@ async function createComment(payload) {
     created_at: new Date().toISOString(),
   }
 
-  const sql = `
-    INSERT INTO comments (id, dish_entry_id, user_id, text, mentions, created_at)
-    VALUES (
-      ${sqlValue(record.id)},
-      ${sqlValue(record.dish_entry_id)},
-      ${sqlValue(record.user_id)},
-      ${sqlValue(record.text)},
-      ${sqlValue(JSON.stringify(record.mentions))},
-      ${sqlValue(record.created_at)}
-    );
-  `
+  await db.insert(schema.comments).values(record)
 
-  await runWriteQuery(sql)
   return {
     ...record,
     user: ensureRecordExists(users, userId, 'el usuario del comentario'),
@@ -1322,52 +1082,42 @@ async function createComment(payload) {
 
 async function getInspirationLists(userId) {
   const [users, lists, items, dishEntries] = await Promise.all([
-    runJsonQuery(ROUTE_QUERIES.users),
-    runJsonQuery(ROUTE_QUERIES.inspirationLists),
-    runJsonQuery(ROUTE_QUERIES.inspirationListItems),
-    runJsonQuery(ROUTE_QUERIES.dishEntries),
+    FETCH.users(),
+    FETCH.inspirationLists(),
+    FETCH.inspirationListItems(),
+    FETCH.dishEntries(),
   ])
 
   ensureRecordExists(users, userId, 'el usuario solicitado')
-  const entriesById = new Map(dishEntries.map((entry) => [entry.id, entry]))
+  const entriesById = new Map(dishEntries.map((e) => [e.id, e]))
 
   return lists
-    .filter((list) => list.user_id === userId)
-    .map((list) => {
+    .filter((l) => l.user_id === userId)
+    .map((l) => {
       const listItems = items
-        .filter((item) => item.list_id === list.id)
-        .map((item) => ({
-          ...item,
-          tried: Boolean(item.tried),
-          dish_entry: entriesById.get(item.dish_entry_id) ?? null,
+        .filter((i) => i.list_id === l.id)
+        .map((i) => ({
+          ...i,
+          dish_entry: entriesById.get(i.dish_entry_id) ?? null,
         }))
 
-      return {
-        ...list,
-        is_default: Boolean(list.is_default),
-        items: listItems,
-        items_count: listItems.length,
-      }
+      return { ...l, items: listItems, items_count: listItems.length }
     })
 }
 
 async function createInspirationList(payload) {
   const userId = getRequiredString(payload.user_id, 'el user_id')
   const name = getRequiredString(payload.name, 'el nombre de la lista')
-  const isDefault = toBooleanFlag(payload.is_default, 0)
+  const isDefault = Boolean(payload.is_default)
 
-  const [users, lists] = await Promise.all([
-    runJsonQuery(ROUTE_QUERIES.users),
-    runJsonQuery(ROUTE_QUERIES.inspirationLists),
-  ])
-
+  const [users, lists] = await Promise.all([FETCH.users(), FETCH.inspirationLists()])
   ensureRecordExists(users, userId, 'el usuario')
 
   if (
     lists.some(
-      (list) =>
-        list.user_id === userId &&
-        list.name.trim().toLowerCase() === name.trim().toLowerCase(),
+      (l) =>
+        l.user_id === userId &&
+        l.name.trim().toLowerCase() === name.trim().toLowerCase(),
     )
   ) {
     throw new Error('Ya existe una lista con ese nombre para este usuario.')
@@ -1381,48 +1131,31 @@ async function createInspirationList(payload) {
     created_at: new Date().toISOString(),
   }
 
-  const sql = `
-    INSERT INTO inspiration_lists (id, user_id, name, is_default, created_at)
-    VALUES (
-      ${sqlValue(record.id)},
-      ${sqlValue(record.user_id)},
-      ${sqlValue(record.name)},
-      ${numericSqlValue(record.is_default)},
-      ${sqlValue(record.created_at)}
-    );
-  `
-
-  await runWriteQuery(sql)
-  return {
-    ...record,
-    is_default: Boolean(record.is_default),
-  }
+  await db.insert(schema.inspirationLists).values(record)
+  return record
 }
 
 async function createInspirationListItem(payload) {
   const listId = getRequiredString(payload.list_id, 'el list_id')
   const dishEntryId = getRequiredString(payload.dish_entry_id, 'el dish_entry_id')
-  const tried = toBooleanFlag(payload.tried, 0)
+  const tried = Boolean(payload.tried)
   const now = new Date().toISOString()
 
   const [lists, dishEntries, items] = await Promise.all([
-    runJsonQuery(ROUTE_QUERIES.inspirationLists),
-    runJsonQuery(ROUTE_QUERIES.dishEntries),
-    runJsonQuery(ROUTE_QUERIES.inspirationListItems),
+    FETCH.inspirationLists(),
+    FETCH.dishEntries(),
+    FETCH.inspirationListItems(),
   ])
 
   ensureRecordExists(lists, listId, 'la lista')
   ensureRecordExists(dishEntries, dishEntryId, 'la valoración')
 
-  const existingItem = items.find(
-    (item) => item.list_id === listId && item.dish_entry_id === dishEntryId,
+  const existing = items.find(
+    (i) => i.list_id === listId && i.dish_entry_id === dishEntryId,
   )
 
-  if (existingItem) {
-    return {
-      ...existingItem,
-      tried: Boolean(existingItem.tried),
-    }
+  if (existing) {
+    return existing
   }
 
   const record = {
@@ -1434,65 +1167,31 @@ async function createInspirationListItem(payload) {
     saved_at: now,
   }
 
-  const sql = `
-    INSERT INTO inspiration_list_items (
-      id,
-      list_id,
-      dish_entry_id,
-      tried,
-      tried_at,
-      saved_at
-    ) VALUES (
-      ${sqlValue(record.id)},
-      ${sqlValue(record.list_id)},
-      ${sqlValue(record.dish_entry_id)},
-      ${numericSqlValue(record.tried)},
-      ${sqlValue(record.tried_at)},
-      ${sqlValue(record.saved_at)}
-    );
-  `
-
-  await runWriteQuery(sql)
-  return {
-    ...record,
-    tried: Boolean(record.tried),
-  }
+  await db.insert(schema.inspirationListItems).values(record)
+  return record
 }
 
 async function updateInspirationListItem(itemId, payload) {
-  const items = await runJsonQuery(ROUTE_QUERIES.inspirationListItems)
-  const currentItem = ensureRecordExists(items, itemId, 'el elemento de lista')
+  const items = await FETCH.inspirationListItems()
+  const current = ensureRecordExists(items, itemId, 'el elemento de lista')
 
-  if (toBooleanFlag(payload.remove, 0) === 1) {
-    const sql = `
-      DELETE FROM inspiration_list_items
-      WHERE id = ${sqlValue(itemId)};
-    `
-
-    await runWriteQuery(sql)
+  if (payload.remove) {
+    await db
+      .delete(schema.inspirationListItems)
+      .where(eq(schema.inspirationListItems.id, itemId))
     return { removed: true, id: itemId }
   }
 
-  const tried = toBooleanFlag(payload.tried, currentItem.tried)
-  const triedAt =
-    tried === 1
-      ? currentItem.tried_at ?? new Date().toISOString()
-      : null
+  const tried = payload.tried !== undefined ? Boolean(payload.tried) : current.tried
+  const tried_at = tried ? (current.tried_at ?? new Date().toISOString()) : null
 
-  const sql = `
-    UPDATE inspiration_list_items
-    SET
-      tried = ${numericSqlValue(tried)},
-      tried_at = ${sqlValue(triedAt)}
-    WHERE id = ${sqlValue(itemId)};
-  `
+  const [updated] = await db
+    .update(schema.inspirationListItems)
+    .set({ tried, tried_at })
+    .where(eq(schema.inspirationListItems.id, itemId))
+    .returning()
 
-  await runWriteQuery(sql)
-  return {
-    ...currentItem,
-    tried: Boolean(tried),
-    tried_at: triedAt,
-  }
+  return updated ?? { ...current, tried, tried_at }
 }
 
 async function createRecommendation(payload) {
@@ -1504,134 +1203,95 @@ async function createRecommendation(payload) {
     throw new Error('No puedes recomendarte a ti mismo.')
   }
 
-  const [users, dishEntries] = await Promise.all([
-    runJsonQuery(ROUTE_QUERIES.users),
-    runJsonQuery(ROUTE_QUERIES.dishEntries),
+  const [users, dishEntries, follows] = await Promise.all([
+    FETCH.users(),
+    FETCH.dishEntries(),
+    FETCH.follows(),
   ])
 
   ensureRecordExists(users, fromUserId, 'el usuario origen')
   ensureRecordExists(users, toUserId, 'el usuario destino')
   ensureRecordExists(dishEntries, dishEntryId, 'la valoración recomendada')
 
+  if (!buildMutualFollowIds(follows, fromUserId).has(toUserId)) {
+    throw new Error('Solo puedes enviar recomendaciones a amistades mutuas.')
+  }
+
   const record = {
     id: randomUUID(),
     from_user_id: fromUserId,
     to_user_id: toUserId,
     dish_entry_id: dishEntryId,
-    seen: 0,
+    seen: false,
     created_at: new Date().toISOString(),
   }
 
-  const sql = `
-    INSERT INTO recommendations (
-      id,
-      from_user_id,
-      to_user_id,
-      dish_entry_id,
-      seen,
-      created_at
-    ) VALUES (
-      ${sqlValue(record.id)},
-      ${sqlValue(record.from_user_id)},
-      ${sqlValue(record.to_user_id)},
-      ${sqlValue(record.dish_entry_id)},
-      ${numericSqlValue(record.seen)},
-      ${sqlValue(record.created_at)}
-    );
-  `
-
-  await runWriteQuery(sql)
-  return {
-    ...record,
-    seen: false,
-  }
+  await db.insert(schema.recommendations).values(record)
+  return record
 }
 
 async function markRecommendationSeen(recommendationId) {
-  const recommendations = await runJsonQuery(ROUTE_QUERIES.recommendations)
-  const currentRecommendation = ensureRecordExists(
-    recommendations,
-    recommendationId,
-    'la recomendación',
-  )
+  const recs = await FETCH.recommendations()
+  ensureRecordExists(recs, recommendationId, 'la recomendación')
 
-  const sql = `
-    UPDATE recommendations
-    SET seen = 1
-    WHERE id = ${sqlValue(recommendationId)};
-  `
+  const [updated] = await db
+    .update(schema.recommendations)
+    .set({ seen: true })
+    .where(eq(schema.recommendations.id, recommendationId))
+    .returning()
 
-  await runWriteQuery(sql)
-  return {
-    ...currentRecommendation,
-    seen: true,
-  }
+  return updated
 }
 
 async function getRecommendations(userId) {
-  const [users, recommendations, dishEntries] = await Promise.all([
-    runJsonQuery(ROUTE_QUERIES.users),
-    runJsonQuery(ROUTE_QUERIES.recommendations),
-    runJsonQuery(ROUTE_QUERIES.dishEntries),
+  const [users, recs, dishEntries, follows] = await Promise.all([
+    FETCH.users(),
+    FETCH.recommendations(),
+    FETCH.dishEntries(),
+    FETCH.follows(),
   ])
 
   ensureRecordExists(users, userId, 'el usuario solicitado')
   const usersById = buildUserLookup(users)
-  const entriesById = new Map(dishEntries.map((entry) => [entry.id, entry]))
-  const inbox = recommendations
-    .filter((recommendation) => recommendation.to_user_id === userId)
-    .map((recommendation) => ({
-      ...recommendation,
-      seen: Boolean(recommendation.seen),
-      from_user: usersById.get(recommendation.from_user_id) ?? null,
-      to_user: usersById.get(recommendation.to_user_id) ?? null,
-      dish_entry: entriesById.get(recommendation.dish_entry_id) ?? null,
+  const entriesById = new Map(dishEntries.map((e) => [e.id, e]))
+  const mutualFollowIds = buildMutualFollowIds(follows, userId)
+
+  const inbox = recs
+    .filter(
+      (r) => r.to_user_id === userId && mutualFollowIds.has(r.from_user_id),
+    )
+    .map((r) => ({
+      ...r,
+      from_user: usersById.get(r.from_user_id) ?? null,
+      to_user: usersById.get(r.to_user_id) ?? null,
+      dish_entry: entriesById.get(r.dish_entry_id) ?? null,
     }))
 
   return {
     recommendations: inbox,
-    unseen: inbox.filter((recommendation) => !recommendation.seen),
-    unseen_count: inbox.filter((recommendation) => !recommendation.seen).length,
+    unseen: inbox.filter((r) => !r.seen),
+    unseen_count: inbox.filter((r) => !r.seen).length,
   }
 }
 
 async function createAchievement(payload) {
   const userId = getRequiredString(payload.user_id, 'el user_id')
   const badgeType = getRequiredString(payload.badge_type, 'el badge_type')
-  const notified = toBooleanFlag(payload.notified, 0)
-  const allowedBadgeTypes = [
-    'primer_plato',
-    'cinco_platos',
-    'diez_platos',
-    'primer_restaurante',
-    'cinco_restaurantes',
-    'catador_social',
-    'explorador',
-    'racha_semanal',
-    'top_score',
-    'coleccionista_inspo',
-  ]
+  const notified = Boolean(payload.notified)
 
-  if (!allowedBadgeTypes.includes(badgeType)) {
+  if (!ACHIEVEMENT_TYPES.includes(badgeType)) {
     throw new Error('El badge_type no es válido.')
   }
 
-  const [users, achievements] = await Promise.all([
-    runJsonQuery(ROUTE_QUERIES.users),
-    runJsonQuery(ROUTE_QUERIES.achievements),
-  ])
-
+  const [users, achievements] = await Promise.all([FETCH.users(), FETCH.achievements()])
   ensureRecordExists(users, userId, 'el usuario')
-  const existingAchievement = achievements.find(
-    (achievement) =>
-      achievement.user_id === userId && achievement.badge_type === badgeType,
+
+  const existing = achievements.find(
+    (a) => a.user_id === userId && a.badge_type === badgeType,
   )
 
-  if (existingAchievement) {
-    return {
-      ...existingAchievement,
-      notified: Boolean(existingAchievement.notified),
-    }
+  if (existing) {
+    return existing
   }
 
   const record = {
@@ -1642,38 +1302,20 @@ async function createAchievement(payload) {
     notified,
   }
 
-  const sql = `
-    INSERT INTO achievements (id, user_id, badge_type, unlocked_at, notified)
-    VALUES (
-      ${sqlValue(record.id)},
-      ${sqlValue(record.user_id)},
-      ${sqlValue(record.badge_type)},
-      ${sqlValue(record.unlocked_at)},
-      ${numericSqlValue(record.notified)}
-    );
-  `
-
-  await runWriteQuery(sql)
-  return {
-    ...record,
-    notified: Boolean(record.notified),
-  }
+  await db.insert(schema.achievements).values(record)
+  return record
 }
 
 async function getAchievements(userId) {
   const [users, achievements, dishEntries] = await Promise.all([
-    runJsonQuery(ROUTE_QUERIES.users),
-    runJsonQuery(ROUTE_QUERIES.achievements),
-    runJsonQuery(ROUTE_QUERIES.dishEntries),
+    FETCH.users(),
+    FETCH.achievements(),
+    FETCH.dishEntries(),
   ])
 
   ensureRecordExists(users, userId, 'el usuario solicitado')
-  const userAchievements = achievements
-    .filter((achievement) => achievement.user_id === userId)
-    .map((achievement) => ({
-      ...achievement,
-      notified: Boolean(achievement.notified),
-    }))
+
+  const userAchievements = achievements.filter((a) => a.user_id === userId)
 
   return {
     achievements: userAchievements,
@@ -1682,59 +1324,25 @@ async function getAchievements(userId) {
   }
 }
 
-async function loadPublicSharePayload(token) {
-  const shareTokens = await runJsonQuery(ROUTE_QUERIES.publicShareTokens)
-  const shareToken = shareTokens.find((item) => item.token === token)
+async function updateAchievement(achievementId, payload) {
+  const achievements = await FETCH.achievements()
+  ensureRecordExists(achievements, achievementId, 'el logro solicitado')
 
-  if (!shareToken) {
-    throw new Error('No existe ningún enlace público con ese token.')
-  }
+  const notified =
+    payload.notified !== undefined
+      ? Boolean(payload.notified)
+      : achievements.find((a) => a.id === achievementId)?.notified ?? false
 
-  const bootstrap = await loadBootstrap()
-  let scopedEntries = []
+  const [updated] = await db
+    .update(schema.achievements)
+    .set({ notified })
+    .where(eq(schema.achievements.id, achievementId))
+    .returning()
 
-  if (shareToken.context === 'mi_ranking') {
-    scopedEntries = bootstrap.dishEntries.filter(
-      (entry) => entry.created_by_user_id === shareToken.created_by_user_id,
-    )
-  } else if (shareToken.context === 'grupo') {
-    scopedEntries = bootstrap.dishEntries.filter(
-      (entry) => entry.group_id === shareToken.group_id,
-    )
-  } else {
-    scopedEntries = bootstrap.dishEntries.filter(
-      (entry) => entry.visibility === 'public',
-    )
-  }
-
-  const restaurantIds = new Set(scopedEntries.map((entry) => entry.restaurant_id))
-  const categoryIds = new Set(scopedEntries.map((entry) => entry.categoria_id))
-  const dishTypeIds = new Set(scopedEntries.map((entry) => entry.tipo_plato_id))
-  const userIds = new Set(scopedEntries.map((entry) => entry.created_by_user_id))
-  userIds.add(shareToken.created_by_user_id)
-  const groupIds = new Set(
-    shareToken.group_id ? [shareToken.group_id] : scopedEntries.map((entry) => entry.group_id).filter(Boolean),
-  )
-
-  return {
-    shareToken: {
-      ...shareToken,
-      filters: parseJsonValue(shareToken.filters_json, {}),
-    },
-    bootstrap: {
-      users: bootstrap.users.filter((user) => userIds.has(user.id)),
-      groups: bootstrap.groups.filter((group) => groupIds.has(group.id)),
-      groupMembers: bootstrap.groupMembers.filter((member) => groupIds.has(member.group_id)),
-      restaurants: bootstrap.restaurants.filter((restaurant) => restaurantIds.has(restaurant.id)),
-      categories: bootstrap.categories.filter((category) => categoryIds.has(category.id)),
-      dishTypes: bootstrap.dishTypes.filter((dishType) => dishTypeIds.has(dishType.id)),
-      dishEntries: scopedEntries,
-      publicShareTokens: [],
-    },
-  }
+  return updated
 }
 
-async function loadBootstrap() {
+async function loadBootstrapData({ includeSocial = false } = {}) {
   const [
     users,
     groups,
@@ -1744,16 +1352,44 @@ async function loadBootstrap() {
     dishTypes,
     dishEntries,
     publicShareTokens,
-    follows,
-    reactions,
-    comments,
-    inspirationLists,
-    inspirationListItems,
-    recommendations,
-    achievements,
-  ] = await Promise.all(
-    Object.values(ROUTE_QUERIES).map((sql) => runJsonQuery(sql)),
-  )
+  ] = await Promise.all([
+    FETCH.users(),
+    FETCH.groups(),
+    FETCH.groupMembers(),
+    FETCH.restaurants(),
+    FETCH.categories(),
+    FETCH.dishTypes(),
+    FETCH.dishEntries(),
+    FETCH.publicShareTokens(),
+  ])
+
+  let follows = [],
+    reactions = [],
+    comments = [],
+    inspirationLists = [],
+    inspirationListItems = [],
+    recommendations = [],
+    achievements = []
+
+  if (includeSocial) {
+    ;[
+      follows,
+      reactions,
+      comments,
+      inspirationLists,
+      inspirationListItems,
+      recommendations,
+      achievements,
+    ] = await Promise.all([
+      FETCH.follows(),
+      FETCH.reactions(),
+      FETCH.comments(),
+      FETCH.inspirationLists(),
+      FETCH.inspirationListItems(),
+      FETCH.recommendations(),
+      FETCH.achievements(),
+    ])
+  }
 
   return {
     users,
@@ -1766,97 +1402,142 @@ async function loadBootstrap() {
     publicShareTokens,
     follows,
     reactions,
-    comments: comments.map((comment) => ({
-      ...comment,
-      mentions: parseJsonValue(comment.mentions, []),
-    })),
-    inspirationLists: inspirationLists.map((list) => ({
-      ...list,
-      is_default: Boolean(list.is_default),
-    })),
-    inspirationListItems: inspirationListItems.map((item) => ({
-      ...item,
-      tried: Boolean(item.tried),
-    })),
-    recommendations: recommendations.map((recommendation) => ({
-      ...recommendation,
-      seen: Boolean(recommendation.seen),
-    })),
-    achievements: achievements.map((achievement) => ({
-      ...achievement,
-      notified: Boolean(achievement.notified),
-    })),
+    comments,
+    inspirationLists,
+    inspirationListItems,
+    recommendations,
+    achievements,
   }
 }
+
+async function loadPublicSharePayload(token) {
+  const tokens = await FETCH.publicShareTokens()
+  const shareToken = tokens.find((t) => t.token === token)
+
+  if (!shareToken) {
+    throw new Error('No existe ningún enlace público con ese token.')
+  }
+
+  const bootstrap = await loadBootstrapData()
+  let scopedEntries = []
+
+  if (shareToken.context === 'mi_ranking') {
+    scopedEntries = bootstrap.dishEntries.filter(
+      (e) => e.created_by_user_id === shareToken.created_by_user_id,
+    )
+  } else if (shareToken.context === 'grupo') {
+    scopedEntries = bootstrap.dishEntries.filter(
+      (e) => e.group_id === shareToken.group_id,
+    )
+  } else {
+    scopedEntries = bootstrap.dishEntries.filter((e) => e.visibility === 'public')
+  }
+
+  const restaurantIds = new Set(scopedEntries.map((e) => e.restaurant_id))
+  const categoryIds = new Set(scopedEntries.map((e) => e.categoria_id))
+  const dishTypeIds = new Set(scopedEntries.map((e) => e.tipo_plato_id))
+  const userIds = new Set(scopedEntries.map((e) => e.created_by_user_id))
+  userIds.add(shareToken.created_by_user_id)
+  const groupIds = new Set(
+    shareToken.group_id
+      ? [shareToken.group_id]
+      : scopedEntries.map((e) => e.group_id).filter(Boolean),
+  )
+
+  return {
+    shareToken: {
+      ...shareToken,
+      filters: parseJsonValue(shareToken.filters_json, {}),
+    },
+    bootstrap: {
+      users: bootstrap.users.filter((u) => userIds.has(u.id)),
+      groups: bootstrap.groups.filter((g) => groupIds.has(g.id)),
+      groupMembers: bootstrap.groupMembers.filter((m) => groupIds.has(m.group_id)),
+      restaurants: bootstrap.restaurants.filter((r) => restaurantIds.has(r.id)),
+      categories: bootstrap.categories.filter((c) => categoryIds.has(c.id)),
+      dishTypes: bootstrap.dishTypes.filter((d) => dishTypeIds.has(d.id)),
+      dishEntries: scopedEntries,
+      publicShareTokens: [],
+    },
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Route handlers
+// ---------------------------------------------------------------------------
 
 async function handleRoute(url, response) {
   const { pathname, searchParams } = url
 
   if (pathname === '/api/health') {
-    return sendJson(response, 200, {
-      ok: true,
-      databasePath: DB_PATH,
-      databaseReady: existsSync(DB_PATH),
-    })
+    try {
+      await db.execute('SELECT 1')
+      return sendJson(response, 200, { ok: true, database: 'postgresql' })
+    } catch {
+      return sendJson(response, 503, { ok: false, error: 'Database unavailable.' })
+    }
   }
 
   if (pathname === '/api/bootstrap') {
-    const payload = await loadBootstrap()
-    return sendJson(response, 200, payload)
+    const includeSocial =
+      searchParams.get('include_social') === '1' ||
+      searchParams.get('includeSocial') === '1'
+    return sendJson(response, 200, await loadBootstrapData({ includeSocial }))
   }
 
   if (pathname.startsWith('/api/public-share/')) {
     const token = pathname.replace('/api/public-share/', '').trim()
-    const payload = await loadPublicSharePayload(token)
-    return sendJson(response, 200, payload)
+    return sendJson(response, 200, await loadPublicSharePayload(token))
   }
 
   if (pathname === '/api/follows') {
     const userId = getCurrentUserIdFromSearchParams(searchParams)
-    const payload = await getFollowState(userId)
-    return sendJson(response, 200, payload)
+    return sendJson(response, 200, await getFollowState(userId))
   }
 
   if (pathname === '/api/community/feed') {
-    const payload = await getCommunityFeed(searchParams)
-    return sendJson(response, 200, payload)
+    return sendJson(response, 200, await getCommunityFeed(searchParams))
   }
 
   if (pathname.startsWith('/api/comments/')) {
     const entryId = decodeURIComponent(pathname.replace('/api/comments/', ''))
-    const comments = await getCommentsForEntry(entryId)
-    return sendJson(response, 200, { comments })
+    return sendJson(response, 200, {
+      comments: await getCommentsForEntry(entryId),
+    })
   }
 
   if (pathname === '/api/inspiration-lists') {
     const userId = getCurrentUserIdFromSearchParams(searchParams)
-    const inspirationLists = await getInspirationLists(userId)
-    return sendJson(response, 200, { inspirationLists })
+    return sendJson(response, 200, {
+      inspirationLists: await getInspirationLists(userId),
+    })
   }
 
   if (pathname === '/api/recommendations') {
     const userId = getCurrentUserIdFromSearchParams(searchParams)
-    const payload = await getRecommendations(userId)
-    return sendJson(response, 200, payload)
+    return sendJson(response, 200, await getRecommendations(userId))
   }
 
   if (pathname === '/api/achievements') {
     const userId = getCurrentUserIdFromSearchParams(searchParams)
-    const payload = await getAchievements(userId)
-    return sendJson(response, 200, payload)
+    return sendJson(response, 200, await getAchievements(userId))
   }
 
+  // Generic table reads
   const routeKey = pathname.replace('/api/', '')
-  if (routeKey in ROUTE_QUERIES) {
-    const rows = await runJsonQuery(ROUTE_QUERIES[routeKey])
+
+  if (routeKey in FETCH) {
+    const rows = await FETCH[routeKey]()
     const payload = routeKey === 'restaurants' ? parseRestaurantRows(rows) : rows
     return sendJson(response, 200, payload)
   }
 
-  return sendJson(response, 404, {
-    error: `Ruta no encontrada: ${pathname}`,
-  })
+  return sendJson(response, 404, { error: `Ruta no encontrada: ${pathname}` })
 }
+
+// ---------------------------------------------------------------------------
+// HTTP server
+// ---------------------------------------------------------------------------
 
 const server = http.createServer(async (request, response) => {
   if (!request.url) {
@@ -1873,6 +1554,10 @@ const server = http.createServer(async (request, response) => {
     return
   }
 
+  if (enforceRateLimit(request, response)) {
+    return
+  }
+
   try {
     const url = new URL(request.url, `http://${request.headers.host}`)
 
@@ -1881,150 +1566,129 @@ const server = http.createServer(async (request, response) => {
       return
     }
 
+    if (request.method === 'POST' || request.method === 'PUT') {
+      ensureJsonRequest(request)
+    }
+
     if (request.method === 'POST' && url.pathname === '/api/follows') {
       const body = await readJsonBody(request)
-      const follow = await createFollow(body)
-      sendJson(response, 201, { follow })
+      sendJson(response, 201, { follow: await createFollow(body) })
       return
     }
 
     if (request.method === 'POST' && url.pathname === '/api/restaurants') {
       const body = await readJsonBody(request)
-      const restaurant = await createRestaurant(body)
-      sendJson(response, 201, { restaurant })
+      sendJson(response, 201, { restaurant: await createRestaurant(body) })
       return
     }
 
     if (request.method === 'POST' && url.pathname === '/api/groups') {
       const body = await readJsonBody(request)
-      const result = await createGroup(body)
-      sendJson(response, 201, result)
+      sendJson(response, 201, await createGroup(body))
       return
     }
 
     if (request.method === 'POST' && url.pathname === '/api/categories') {
       const body = await readJsonBody(request)
-      const category = await createCategory(body)
-      sendJson(response, 201, { category })
+      sendJson(response, 201, { category: await createCategory(body) })
       return
     }
 
     if (request.method === 'POST' && url.pathname === '/api/dish-types') {
       const body = await readJsonBody(request)
-      const dishType = await createDishType(body)
-      sendJson(response, 201, { dishType })
+      sendJson(response, 201, { dishType: await createDishType(body) })
       return
     }
 
     if (request.method === 'POST' && url.pathname === '/api/dish-entries') {
       const body = await readJsonBody(request)
-      const dishEntry = await createDishEntry(body)
-      sendJson(response, 201, { dishEntry })
+      sendJson(response, 201, { dishEntry: await createDishEntry(body) })
       return
     }
 
     if (request.method === 'POST' && url.pathname === '/api/reactions') {
       const body = await readJsonBody(request)
-      const reaction = await addOrUpdateReaction(body)
-      sendJson(response, 201, { reaction })
+      sendJson(response, 201, { reaction: await addOrUpdateReaction(body) })
       return
     }
 
     if (request.method === 'POST' && url.pathname === '/api/comments') {
       const body = await readJsonBody(request)
-      const comment = await createComment(body)
-      sendJson(response, 201, { comment })
+      sendJson(response, 201, { comment: await createComment(body) })
       return
     }
 
     if (request.method === 'POST' && url.pathname === '/api/inspiration-lists') {
       const body = await readJsonBody(request)
-      const inspirationList = await createInspirationList(body)
-      sendJson(response, 201, { inspirationList })
+      sendJson(response, 201, { inspirationList: await createInspirationList(body) })
       return
     }
 
     if (request.method === 'POST' && url.pathname === '/api/inspiration-list-items') {
       const body = await readJsonBody(request)
-      const inspirationListItem = await createInspirationListItem(body)
-      sendJson(response, 201, { inspirationListItem })
+      sendJson(response, 201, {
+        inspirationListItem: await createInspirationListItem(body),
+      })
       return
     }
 
     if (request.method === 'POST' && url.pathname === '/api/recommendations') {
       const body = await readJsonBody(request)
-      const recommendation = await createRecommendation(body)
-      sendJson(response, 201, { recommendation })
+      sendJson(response, 201, { recommendation: await createRecommendation(body) })
       return
     }
 
     if (request.method === 'POST' && url.pathname === '/api/achievements') {
       const body = await readJsonBody(request)
-      const achievement = await createAchievement(body)
-      sendJson(response, 201, { achievement })
+      sendJson(response, 201, { achievement: await createAchievement(body) })
       return
     }
 
     if (request.method === 'POST' && url.pathname === '/api/public-share-tokens') {
       const body = await readJsonBody(request)
-      const shareToken = await createPublicShareToken(body)
-      sendJson(response, 201, { shareToken })
+      sendJson(response, 201, { shareToken: await createPublicShareToken(body) })
       return
     }
 
     if (request.method === 'PUT' && url.pathname.startsWith('/api/users/')) {
       const body = await readJsonBody(request)
       const userId = decodeURIComponent(url.pathname.replace('/api/users/', ''))
-      const user = await updateUser(userId, body)
-      sendJson(response, 200, { user })
+      sendJson(response, 200, { user: await updateUser(userId, body) })
       return
     }
 
     if (request.method === 'PUT' && url.pathname.startsWith('/api/groups/')) {
       const body = await readJsonBody(request)
       const groupId = decodeURIComponent(url.pathname.replace('/api/groups/', ''))
-      const group = await updateGroup(groupId, body)
-      sendJson(response, 200, { group })
+      sendJson(response, 200, { group: await updateGroup(groupId, body) })
       return
     }
 
     if (request.method === 'PUT' && url.pathname.startsWith('/api/restaurants/')) {
       const body = await readJsonBody(request)
-      const restaurantId = decodeURIComponent(
-        url.pathname.replace('/api/restaurants/', ''),
-      )
-      const restaurant = await updateRestaurant(restaurantId, body)
-      sendJson(response, 200, { restaurant })
+      const id = decodeURIComponent(url.pathname.replace('/api/restaurants/', ''))
+      sendJson(response, 200, { restaurant: await updateRestaurant(id, body) })
       return
     }
 
     if (request.method === 'PUT' && url.pathname.startsWith('/api/categories/')) {
       const body = await readJsonBody(request)
-      const categoryId = decodeURIComponent(
-        url.pathname.replace('/api/categories/', ''),
-      )
-      const category = await updateCategory(categoryId, body)
-      sendJson(response, 200, { category })
+      const id = decodeURIComponent(url.pathname.replace('/api/categories/', ''))
+      sendJson(response, 200, { category: await updateCategory(id, body) })
       return
     }
 
     if (request.method === 'PUT' && url.pathname.startsWith('/api/dish-types/')) {
       const body = await readJsonBody(request)
-      const dishTypeId = decodeURIComponent(
-        url.pathname.replace('/api/dish-types/', ''),
-      )
-      const dishType = await updateDishType(dishTypeId, body)
-      sendJson(response, 200, { dishType })
+      const id = decodeURIComponent(url.pathname.replace('/api/dish-types/', ''))
+      sendJson(response, 200, { dishType: await updateDishType(id, body) })
       return
     }
 
     if (request.method === 'PUT' && url.pathname.startsWith('/api/dish-entries/')) {
       const body = await readJsonBody(request)
-      const dishEntryId = decodeURIComponent(
-        url.pathname.replace('/api/dish-entries/', ''),
-      )
-      const dishEntry = await updateDishEntry(dishEntryId, body)
-      sendJson(response, 200, { dishEntry })
+      const id = decodeURIComponent(url.pathname.replace('/api/dish-entries/', ''))
+      sendJson(response, 200, { dishEntry: await updateDishEntry(id, body) })
       return
     }
 
@@ -2033,47 +1697,53 @@ const server = http.createServer(async (request, response) => {
       url.pathname.startsWith('/api/inspiration-list-items/')
     ) {
       const body = await readJsonBody(request)
-      const itemId = decodeURIComponent(
+      const id = decodeURIComponent(
         url.pathname.replace('/api/inspiration-list-items/', ''),
       )
-      const inspirationListItem = await updateInspirationListItem(itemId, body)
-      sendJson(response, 200, { inspirationListItem })
+      sendJson(response, 200, {
+        inspirationListItem: await updateInspirationListItem(id, body),
+      })
       return
     }
 
     if (request.method === 'PUT' && url.pathname.startsWith('/api/recommendations/')) {
-      const recommendationId = decodeURIComponent(
-        url.pathname.replace('/api/recommendations/', ''),
-      )
-      const recommendation = await markRecommendationSeen(recommendationId)
-      sendJson(response, 200, { recommendation })
+      const id = decodeURIComponent(url.pathname.replace('/api/recommendations/', ''))
+      sendJson(response, 200, { recommendation: await markRecommendationSeen(id) })
+      return
+    }
+
+    if (request.method === 'PUT' && url.pathname.startsWith('/api/achievements/')) {
+      const body = await readJsonBody(request)
+      const id = decodeURIComponent(url.pathname.replace('/api/achievements/', ''))
+      sendJson(response, 200, { achievement: await updateAchievement(id, body) })
       return
     }
 
     if (request.method === 'DELETE' && url.pathname.startsWith('/api/follows/')) {
-      const followedUserId = decodeURIComponent(url.pathname.replace('/api/follows/', ''))
+      const followedUserId = decodeURIComponent(
+        url.pathname.replace('/api/follows/', ''),
+      )
       const currentUserId = getCurrentUserIdFromSearchParams(url.searchParams)
-      const result = await deleteFollow(currentUserId, followedUserId)
-      sendJson(response, 200, result)
+      sendJson(response, 200, await deleteFollow(currentUserId, followedUserId))
       return
     }
 
     if (request.method === 'DELETE' && url.pathname.startsWith('/api/reactions/')) {
       const reactionId = decodeURIComponent(url.pathname.replace('/api/reactions/', ''))
-      const result = await deleteReaction(reactionId)
-      sendJson(response, 200, result)
+      sendJson(response, 200, await deleteReaction(reactionId))
       return
     }
 
     return sendJson(response, 405, { error: 'Método no permitido.' })
   } catch (error) {
     return sendJson(response, 500, {
-      error: error instanceof Error ? error.message : 'Error interno del servidor.',
+      error:
+        error instanceof Error ? error.message : 'Error interno del servidor.',
     })
   }
 })
 
 server.listen(PORT, HOST, () => {
-  console.log(`API SQLite escuchando en http://${HOST}:${PORT}`)
-  console.log(`Base activa: ${DB_PATH}`)
+  console.log(`API escuchando en http://${HOST}:${PORT}`)
+  console.log(`Base de datos: PostgreSQL (${process.env.DATABASE_URL ?? 'localhost:5432'})`)
 })
