@@ -28,7 +28,7 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "3030:3030"
+      - "3333:3030"
 
   frontend:
     build:
@@ -36,7 +36,7 @@ services:
       dockerfile: Dockerfile.frontend
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "4444:80"
     depends_on:
       - api
 
