@@ -18,6 +18,7 @@ import { getScoreTone } from '../lib/scoring.js'
 export function HomeScreen({ onNavigate, onOpenEntity, onOpenSearch }) {
   const {
     categories,
+    currentUser,
     defaultPinStyle,
     homeDishTypeSection,
     homeNearbySection,
@@ -112,6 +113,33 @@ export function HomeScreen({ onNavigate, onOpenEntity, onOpenSearch }) {
 
   return (
     <section className="screen" aria-label="Pantalla de inicio">
+      <article className="screen__hero screen__hero--editorial">
+        <div className="hero-grid">
+          <div>
+            <p className="eyebrow">Resumen semanal</p>
+            <h2>{currentUser?.nombre ? `${currentUser.nombre}, tu semana pinta bien.` : 'Tu semana gastronómica.'}</h2>
+            <p>
+              Combina top local, actividad reciente y el mapa cercano sin salir de
+              inicio.
+            </p>
+          </div>
+          <div className="hero-grid__stats">
+            <div className="hero-grid__stat">
+              <span>Top semanal</span>
+              <strong>{visibleRankingEntries[0]?.dishTypeName || 'Sin líder aún'}</strong>
+            </div>
+            <div className="hero-grid__stat">
+              <span>Cerca de ti</span>
+              <strong>{visibleNearbyRestaurants.length} sitios</strong>
+            </div>
+            <div className="hero-grid__stat">
+              <span>Actividad</span>
+              <strong>{latestEntries.length} platos recientes</strong>
+            </div>
+          </div>
+        </div>
+      </article>
+
       <button
         className="home-search-bar"
         type="button"
@@ -122,127 +150,133 @@ export function HomeScreen({ onNavigate, onOpenEntity, onOpenSearch }) {
         <span>Buscar restaurante o plato...</span>
       </button>
 
-      <SectionHeader
-        title="Últimos platos añadidos"
-        actionLabel="Ver todo"
-        onAction={() => onNavigate?.('community')}
-      />
-      <div className="horizontal-scroll">
-        {latestEntries.map((dish) => (
-          <button
-            key={dish.id}
-            className="list-card list-card--button"
-            type="button"
-            onClick={() => onOpenEntity?.({ type: 'dishEntry', id: dish.id })}
-          >
-            <div className="list-card__title">
-              <span className="emoji-badge" aria-hidden="true">
-                {categories.find((category) => category.id === dish.categoria_id)?.icono}
-              </span>
-              <div>
-                <strong>{dish.dishTypeName}</strong>
-                <p>{dish.restaurantName}</p>
-              </div>
-            </div>
-            <div className="list-card__meta">
-              <span className="status-pill">{dish.visibility}</span>
-              <span
-                className={`ranking-card__score ranking-card__score--${getScoreTone(dish.puntuacion_general)}`}
+      <div className="home-section-grid">
+        <div>
+          <SectionHeader
+            title="Últimos platos añadidos"
+            actionLabel="Ver explorar"
+            onAction={() => onNavigate?.('community')}
+          />
+          <div className="horizontal-scroll">
+            {latestEntries.map((dish) => (
+              <button
+                key={dish.id}
+                className="list-card list-card--button"
+                type="button"
+                onClick={() => onOpenEntity?.({ type: 'dishEntry', id: dish.id })}
               >
-                {formatScore(dish.puntuacion_general)}
-              </span>
-            </div>
-          </button>
-        ))}
-      </div>
-
-      <SectionHeader
-        title="🏆 Top por plato"
-        actionLabel="Explorar"
-        onAction={() => onNavigate?.('rankings')}
-      />
-      <div className="chip-row chip-row--categories">
-        <button
-          className={`chip chip--category${!activeCategoryId ? ' chip--active' : ''}`}
-          type="button"
-          onClick={() => handleCategoryChange('')}
-        >
-          Todas
-        </button>
-        {homeDishTypeSection.categories.map((category) => (
-          <button
-            key={category.id}
-            className={`chip chip--category${category.id === activeCategoryId ? ' chip--active' : ''}`}
-            type="button"
-            onClick={() => handleCategoryChange(category.id)}
-          >
-            {category.icon} {category.name}
-          </button>
-        ))}
-      </div>
-
-      <div className="chip-row chip-row--dish-types">
-        <button
-          className={`chip chip--dish-type${!activeDishTypeId ? ' chip--active' : ''}`}
-          type="button"
-          onClick={() => setActiveDishTypeId('')}
-        >
-          Todos
-        </button>
-        {availableDishTypes.map((dishType) => (
-          <button
-            key={dishType.id}
-            className={`chip chip--dish-type${dishType.id === activeDishTypeId ? ' chip--active' : ''}`}
-            type="button"
-            onClick={() => setActiveDishTypeId(dishType.id)}
-          >
-            {dishType.name}
-          </button>
-        ))}
-      </div>
-
-      {visibleRankingEntries.length > 0 ? (
-        <div className="list-stack">
-          {visibleRankingEntries.slice(0, 5).map((entry, index) => (
-            <button
-              key={entry.id}
-              className="ranking-card ranking-card--button"
-              type="button"
-              onClick={() =>
-                onOpenEntity?.({
-                  type: 'restaurant',
-                  id: entry.restaurantId,
-                })
-              }
-            >
-              <div className="ranking-card__meta">
-                <div className="ranking-card__title">
+                <div className="list-card__title">
                   <span className="emoji-badge" aria-hidden="true">
-                    {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '🍽️'}
+                    {categories.find((category) => category.id === dish.categoria_id)?.icono}
                   </span>
-                  <div className="ranking-card__body">
-                    <strong>
-                      {index + 1}. {entry.dishTypeName}
-                    </strong>
-                    <p>{entry.votos} votos</p>
-                    <p className="ranking-card__secondary">{entry.restaurantName}</p>
+                  <div>
+                    <strong>{dish.dishTypeName}</strong>
+                    <p>{dish.restaurantName}</p>
                   </div>
                 </div>
-                <span
-                  className={`ranking-card__score ranking-card__score--${getScoreTone(entry.score)}`}
-                >
-                  {formatScore(entry.score)}
-                </span>
-              </div>
-            </button>
-          ))}
+                <div className="list-card__meta">
+                  <span className="status-pill">{dish.visibility}</span>
+                  <span
+                    className={`ranking-card__score ranking-card__score--${getScoreTone(dish.puntuacion_general)}`}
+                  >
+                    {formatScore(dish.puntuacion_general)}
+                  </span>
+                </div>
+              </button>
+            ))}
+          </div>
         </div>
-      ) : (
-        <article className="surface-card">
-          <strong>Sin datos aún</strong>
-          <p>Aquí aparecerá el ranking del plato seleccionado.</p>
-        </article>
-      )}
+
+        <div>
+          <SectionHeader
+            title="🏆 Top por plato"
+            actionLabel="Abrir rankings"
+            onAction={() => onNavigate?.('rankings')}
+          />
+          <div className="chip-row chip-row--categories">
+            <button
+              className={`chip chip--category${!activeCategoryId ? ' chip--active' : ''}`}
+              type="button"
+              onClick={() => handleCategoryChange('')}
+            >
+              Todas
+            </button>
+            {homeDishTypeSection.categories.map((category) => (
+              <button
+                key={category.id}
+                className={`chip chip--category${category.id === activeCategoryId ? ' chip--active' : ''}`}
+                type="button"
+                onClick={() => handleCategoryChange(category.id)}
+              >
+                {category.icon} {category.name}
+              </button>
+            ))}
+          </div>
+
+          <div className="chip-row chip-row--dish-types">
+            <button
+              className={`chip chip--dish-type${!activeDishTypeId ? ' chip--active' : ''}`}
+              type="button"
+              onClick={() => setActiveDishTypeId('')}
+            >
+              Todos
+            </button>
+            {availableDishTypes.map((dishType) => (
+              <button
+                key={dishType.id}
+                className={`chip chip--dish-type${dishType.id === activeDishTypeId ? ' chip--active' : ''}`}
+                type="button"
+                onClick={() => setActiveDishTypeId(dishType.id)}
+              >
+                {dishType.name}
+              </button>
+            ))}
+          </div>
+
+          {visibleRankingEntries.length > 0 ? (
+            <div className="list-stack">
+              {visibleRankingEntries.slice(0, 5).map((entry, index) => (
+                <button
+                  key={entry.id}
+                  className="ranking-card ranking-card--button"
+                  type="button"
+                  onClick={() =>
+                    onOpenEntity?.({
+                      type: 'restaurant',
+                      id: entry.restaurantId,
+                    })
+                  }
+                >
+                  <div className="ranking-card__meta">
+                    <div className="ranking-card__title">
+                      <span className="emoji-badge" aria-hidden="true">
+                        {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '🍽️'}
+                      </span>
+                      <div className="ranking-card__body">
+                        <strong>
+                          {index + 1}. {entry.dishTypeName}
+                        </strong>
+                        <p>{entry.votos} votos</p>
+                        <p className="ranking-card__secondary">{entry.restaurantName}</p>
+                      </div>
+                    </div>
+                    <span
+                      className={`ranking-card__score ranking-card__score--${getScoreTone(entry.score)}`}
+                    >
+                      {formatScore(entry.score)}
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <article className="surface-card">
+              <strong>Sin datos aún</strong>
+              <p>Aquí aparecerá el ranking del plato seleccionado.</p>
+            </article>
+          )}
+        </div>
+      </div>
 
       <SectionHeader
         title="Restaurantes cercanos"

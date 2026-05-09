@@ -4,6 +4,7 @@ import 'leaflet/dist/leaflet.css'
 import './index.css'
 import App from './App.jsx'
 import { AppStateProvider } from './providers/AppStateProvider.jsx'
+import { ThemeProvider } from './providers/ThemeProvider.jsx'
 
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -13,8 +14,10 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <AppStateProvider>
-      <App />
-    </AppStateProvider>
+    <ThemeProvider>
+      <AppStateProvider>
+        <App />
+      </AppStateProvider>
+    </ThemeProvider>
   </StrictMode>,
 )

@@ -12,8 +12,10 @@ export function BottomNav({ activeId, items, onChange }) {
             onClick={() => onChange(item.id)}
             aria-current={isActive ? 'page' : undefined}
           >
-            <span aria-hidden="true">{item.icon}</span>
-            <span>{item.label}</span>
+            <span className="bottom-nav__icon" aria-hidden="true">
+              {item.icon}
+            </span>
+            <span className="bottom-nav__label">{item.label}</span>
           </button>
         )
       })}

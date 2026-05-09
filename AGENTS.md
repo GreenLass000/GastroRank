@@ -79,6 +79,9 @@ Keep the data model in `TODO.md` exact: users, groups, group members, restaurant
 SQLite is the source of truth for persisted domain entities. Use local storage only for UI-only state such as filters, theme, and temporary drafts unless a task explicitly requires database persistence. If a change affects rankings, maps, forms, or persistence, verify behavior against `TODO.md` before merging.
 
 ## Build, Lint, and Local Development
+- before assuming `node`/`npm` are unavailable, try exporting the environment PATH that includes the local Node install used in this workspace, for example:
+  - `PATH=/home/marcos/.nvm/versions/node/v24.13.0/bin:$PATH`
+- when running verification or local scripts in Codex sessions, prefer prefixing commands with that PATH so tools such as `npm`, `npx`, and `node` remain available without extra setup
 - `npm run dev`: start the local Vite server
 - `npm run build`: create the production bundle in `dist/`
 - `npm run preview`: preview the built app locally

@@ -13,6 +13,7 @@ import { GlobalSearchPanel } from './components/search/GlobalSearchPanel.jsx'
 import { fetchPublicShare } from './lib/api.js'
 import { NAV_ITEMS } from './lib/constants.js'
 import { useAppState } from './hooks/useAppState.js'
+import { useTheme } from './hooks/useTheme.js'
 import { HomeScreen } from './screens/HomeScreen.jsx'
 import { AuthScreen } from './screens/AuthScreen.jsx'
 import { ComunidadScreen } from './screens/ComunidadScreen.jsx'
@@ -81,6 +82,7 @@ function App() {
   const [sharePayload, setSharePayload] = useState(null)
   const [shareError, setShareError] = useState('')
   const [isShareLoading, setIsShareLoading] = useState(false)
+  const { themeMode, resolvedTheme, setThemeMode } = useTheme()
   const { authChecked, currentUser, isLoading, loadError, toast, clearToast } =
     useAppState()
 
@@ -90,6 +92,38 @@ function App() {
   const requiresAuth = !isPublicShareView
   const shouldShowAuthScreen = requiresAuth && authChecked && !currentUser
   const showTopbar = isPublicShareView || Boolean(currentUser)
+  const topbarCopy = {
+    home: {
+      eyebrow: 'Tu mesa',
+      title: `Hola${currentUser?.nombre ? `, ${currentUser.nombre}` : ''}`,
+      subtitle: 'Resumen editorial de platos, top semanal y actividad reciente.',
+    },
+    community: {
+      eyebrow: 'Descubrir',
+      title: 'Explorar',
+      subtitle: 'Feed social, amigos y hallazgos públicos en una sola vista.',
+    },
+    map: {
+      eyebrow: 'Territorio',
+      title: 'Mapa',
+      subtitle: 'Restaurantes cerca, selección rápida y contexto espacial.',
+    },
+    rankings: {
+      eyebrow: 'Leaderboards',
+      title: 'Rankings',
+      subtitle: 'Comparativas compactas para abrir detalle sin perder contexto.',
+    },
+    profile: {
+      eyebrow: 'Cuenta',
+      title: 'Perfil',
+      subtitle: `Logros, actividad y ajustes de ${resolvedTheme === 'dark' ? 'modo oscuro' : 'apariencia'}.`,
+    },
+    report: {
+      eyebrow: 'Informe',
+      title: 'Reporte',
+      subtitle: 'Vista compartible lista para revisar o imprimir.',
+    },
+  }
 
   function handleScreenChange(nextScreen) {
     const normalizedScreen = normalizeScreenId(nextScreen)
@@ -256,19 +290,42 @@ function App() {
     <div className="app-shell">
       {showTopbar ? (
         <header className="topbar">
-          <div>
-            <h1>GastroRank</h1>
+          <div className="topbar__meta">
+            <span className="topbar__label">{topbarCopy[activeScreen]?.eyebrow || 'GastroRank'}</span>
+            <h1>{topbarCopy[activeScreen]?.title || 'GastroRank'}</h1>
+            <p>{topbarCopy[activeScreen]?.subtitle || 'Tu app gastronómica social.'}</p>
           </div>
-          {!shareToken ? (
-            <button
-              className="icon-button"
-              type="button"
-              aria-label="Buscar"
-              onClick={() => setIsSearchOpen(true)}
-            >
-              🔎
-            </button>
-          ) : null}
+          <div className="topbar__actions">
+            {!shareToken ? (
+              <>
+                <button
+                  className="shell-button"
+                  type="button"
+                  aria-label={`Tema actual: ${themeMode}`}
+                  onClick={() =>
+                    setThemeMode(
+                      themeMode === 'system'
+                        ? 'light'
+                        : themeMode === 'light'
+                          ? 'dark'
+                          : 'system',
+                    )
+                  }
+                >
+                  {themeMode === 'dark' ? '🌙' : themeMode === 'light' ? '☀️' : '🖥️'}
+                  <span>{themeMode === 'system' ? 'Sistema' : themeMode === 'dark' ? 'Oscuro' : 'Claro'}</span>
+                </button>
+                <button
+                  className="icon-button"
+                  type="button"
+                  aria-label="Buscar"
+                  onClick={() => setIsSearchOpen(true)}
+                >
+                  🔎
+                </button>
+              </>
+            ) : null}
+          </div>
         </header>
       ) : null}
 
@@ -312,7 +369,12 @@ function App() {
       <ToastCenter message={toast.message} tone={toast.tone} />
 
       {isSearchOpen && currentUser ? (
-        <ModalSheet title="Buscar" onClose={() => setIsSearchOpen(false)}>
+        <ModalSheet
+          title="Buscar"
+          eyebrow="Acceso rápido"
+          immersive
+          onClose={() => setIsSearchOpen(false)}
+        >
           <GlobalSearchPanel
             onClose={() => setIsSearchOpen(false)}
             onOpenEntity={openEntityDetail}
@@ -323,6 +385,8 @@ function App() {
       {entityDetailTarget && currentUser ? (
         <ModalSheet
           title="Detalle"
+          eyebrow="Ficha"
+          immersive
           onClose={() => {
             setEntityDetailTarget(null)
           }}
@@ -338,6 +402,9 @@ function App() {
       {isDishWizardOpen && currentUser ? (
         <ModalSheet
           title="Añadir plato"
+          eyebrow="Nuevo registro"
+          immersive
+          fullHeight
           onClose={() => {
             clearToast()
             setIsDishWizardOpen(false)
@@ -357,6 +424,8 @@ function App() {
       {isRestaurantFormOpen && currentUser ? (
         <ModalSheet
           title="Nuevo restaurante"
+          eyebrow="Ubicación"
+          immersive
           onClose={() => {
             clearToast()
             setIsRestaurantFormOpen(false)

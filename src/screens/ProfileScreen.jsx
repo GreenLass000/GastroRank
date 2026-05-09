@@ -13,6 +13,7 @@ import {
   formatScore,
   formatShortAddress,
 } from '../lib/format.js'
+import { useTheme } from '../hooks/useTheme.js'
 import {
   buildCategoryRankings,
   buildDishTypeRankings,
@@ -334,6 +335,7 @@ function ListDetailSection({
 }
 
 export function ProfileScreen({ onNavigate, onOpenEntity }) {
+  const { resolvedTheme, setThemeMode, themeMode } = useTheme()
   const {
     achievements,
     categories,
@@ -553,6 +555,11 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
       value: String(profileStats.totalRestaurantes),
     },
     { id: 'groups', label: 'Grupos', value: String(profileStats.grupos) },
+  ]
+  const themeOptions = [
+    { id: 'light', label: 'Claro' },
+    { id: 'dark', label: 'Oscuro' },
+    { id: 'system', label: 'Sistema' },
   ]
 
   useEffect(() => {
@@ -788,6 +795,43 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
 
   return (
     <section className="screen profile-screen" aria-label="Pantalla de perfil">
+      <article className="screen__hero screen__hero--editorial profile-screen__hero">
+        <div className="profile-hero">
+          <div>
+            <p className="eyebrow">Tu identidad</p>
+            <h2>{currentUserName}</h2>
+            <p>
+              Controla logros, actividad y apariencia desde una cabecera más limpia y
+              orientada a uso diario.
+            </p>
+          </div>
+          <div className="detail-grid detail-grid--compact">
+            <span className="status-pill">Nivel {userLevel}</span>
+            <span className="status-pill">Racha {weeklyStreak} semanas</span>
+            <span className="status-pill">Tema {resolvedTheme === 'dark' ? 'oscuro' : 'claro'}</span>
+          </div>
+        </div>
+      </article>
+
+      <article className="surface-card profile-theme-card">
+        <div>
+          <strong>Apariencia</strong>
+          <p>Elige entre claro, oscuro o seguir la preferencia del sistema.</p>
+        </div>
+        <div className="theme-toggle" role="group" aria-label="Selector de tema">
+          {themeOptions.map((option) => (
+            <button
+              key={option.id}
+              className={`theme-toggle__button${themeMode === option.id ? ' theme-toggle__button--active' : ''}`}
+              type="button"
+              onClick={() => setThemeMode(option.id)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </article>
+
       <article className="surface-card profile-hero">
         <div className="profile-hero__main">
           <button

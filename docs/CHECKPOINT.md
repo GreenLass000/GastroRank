@@ -4,6 +4,7 @@
 - 2026-04-11
 - 2026-05-05
 - 2026-05-07
+- 2026-05-10
 
 ## Estado general
 Continuidad recuperada sin `docs/CHECKLIST_TECNICO.md` disponible en el repo.
@@ -11,11 +12,16 @@ Continuidad recuperada sin `docs/CHECKLIST_TECNICO.md` disponible en el repo.
 Estado actual más relevante:
 
 - Fase 1 de `docs/PLAN_COMPLETION.md`: implementada en código
-- autenticación básica operativa con registro, login, `auth/me`, cambio de contraseña y logout sobre `server/app.js`
+- autenticación básica operativa con registro, login por `usuario o correo`, `auth/me`, cambio de contraseña y logout sobre `server/app.js`
 - `AppStateProvider` ya no usa `state.users[0]` como sesión fuente; ahora valida token persistido y hace bootstrap tras autenticación
 - nueva pantalla `AuthScreen` añadida y `App.jsx` ya bloquea la app privada cuando no hay sesión
 - `ProfileScreen` ya expone bloque `Cuenta`, cambio de contraseña, cierre de sesión y métricas seguras sin `NaN`
+- `ProfileScreen` ya no rompe si la sesión todavía no está hidratada; los accesos a `currentUser.id` quedaron endurecidos
 - esquema PostgreSQL y Drizzle actualizados con `email`, `password_hash` y `bio` en `users`
+- `server/db/init.postgres.sql` ya inicializa PostgreSQL sin error en la vista `dish_type_rankings`
+- stack Docker verificado en esta sesión con puertos publicados:
+  - frontend `http://localhost:4444`
+  - api `http://localhost:3333`
 
 - rediseño del modal `Añadir plato`: implementado en código según `docs/CAMBIOS_MODAL_ANADIR_PLATO.md`
 - rediseño de la pestaña `Rankings`: implementado en código según `docs/CAMBIOS_TAB_RANKINGS.md`
@@ -29,6 +35,7 @@ Estado actual más relevante:
 - Fase 7 de `.claude/plans/prancy-splashing-sparkle.md`: navegación cerrada con `Comunidad`, compatibilidad legado `lists` y archivado explícito de `ListsScreen`
 - Fase 8 de `.claude/plans/prancy-splashing-sparkle.md`: lógica final de logros implementada con badges definitivos, cola de toast y marcado `notified`
 - Fase 9 de `.claude/plans/prancy-splashing-sparkle.md`: implementada de forma parcial pero funcional
+- `docs/UX_REDESIGN.md`: aplicado de forma inicial en código para shell, tema claro/oscuro/sistema, navegación reordenada y pantallas principales (`Auth`, `Inicio`, `Explorar`, `Perfil`, `ModalSheet`)
 - `RankingsScreen.jsx` ya no depende de `filteredRankingContexts`
 - detalle de filas en `Rankings` migrado de `ModalSheet` a expansión inline compacta
 - siguiente bloque natural para ese plan: verificación con Node y cierre de los puntos pendientes de Fase 9
@@ -293,8 +300,14 @@ Resultado actual:
 
 La siguiente sesión debería centrarse en verificación o ajustes puntuales:
 
-1. ejecutar `npm run lint`
-2. ejecutar `npm run build`
+1. validar en navegador Docker:
+- login con `usuario`
+- login con `correo`
+- registro con `usuario` único
+- acceso a `Perfil` tras hidratación inicial
+2. si se cambia `server/db/init.postgres.sql`, recrear PostgreSQL con:
+- `docker compose down -v`
+- `docker compose up --build -d`
 3. si se retoma el plan de Comunidad + Perfil, cerrar Fase 9 rematando:
 - paginación real a nivel SQLite en feed
 - revisión de `execFile/sqlite3` para parametrización más fuerte en escrituras
@@ -330,9 +343,13 @@ La siguiente sesión debería centrarse en verificación o ajustes puntuales:
 - `Informe` y `Compartir` siguen funcionando, pero su representación impresa todavía se apoya en builders legacy por `typeKey`
 - el repo sigue sin `docs/CHECKLIST_TECNICO.md`
 - el nuevo buscador de `Mapa` usa búsqueda externa equivalente a Places cuando la red lo permite; falta validarlo en entorno real
-- el perfil ya usa follows, achievements, inspiration lists y share links, pero el backend de usuario sigue persistiendo solo `nombre` y `avatar_url` sin `bio`
 - para aplicar los nuevos `badge_type` en SQLite real hará falta `npm run db:reset` cuando el entorno vuelva a tener Node disponible
 - Fase 9 no está cerrada todavía, pero tampoco está pendiente entera
+- el login ahora acepta `payload.identifier` y mantiene compatibilidad con `payload.email`; si se toca auth otra vez, preservar esa compatibilidad
+- Docker ya no debe asumir puertos por defecto:
+  - frontend externo `4444`
+  - api externa `3333`
+  - api interna entre contenedores `3030`
 - ya cubierto:
   - rate limit básico
   - `Content-Type` obligatorio en escrituras HTTP
@@ -347,20 +364,16 @@ La siguiente sesión debería centrarse en verificación o ajustes puntuales:
 
 ## Limitación del entorno
 
-No se ha podido ejecutar verificación con:
+En esta sesión sí se ha podido ejecutar verificación con:
 
 - `npm run lint`
 - `npm run build`
-- `node --check server/app.js`
-
-Motivo:
-
-- `npm` y `node` no están disponibles en este entorno el 2026-05-05 (`/bin/bash: command not found`)
 
 Sí se ha podido ejecutar:
 
-- `bash scripts/db/reset.sh`
-- validación básica de que las nuevas tablas existen en SQLite
+- `docker compose down -v`
+- `docker compose up --build -d`
+- validación de logs de PostgreSQL para confirmar creación limpia de tablas, índices y vistas
 
 ## Archivos que conviene abrir primero al retomar
 

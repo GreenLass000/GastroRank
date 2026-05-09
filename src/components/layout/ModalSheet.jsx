@@ -1,6 +1,13 @@
 import { useEffect } from 'react'
 
-export function ModalSheet({ children, onClose, title }) {
+export function ModalSheet({
+  children,
+  eyebrow,
+  fullHeight = false,
+  immersive = false,
+  onClose,
+  title,
+}) {
   useEffect(() => {
     function handleKeyDown(event) {
       if (event.key === 'Escape') {
@@ -15,7 +22,9 @@ export function ModalSheet({ children, onClose, title }) {
   return (
     <div className="modal-backdrop" role="presentation" onClick={onClose}>
       <div
-        className="modal-sheet"
+        className={`modal-sheet${immersive ? ' modal-sheet--immersive' : ''}${
+          fullHeight ? ' modal-sheet--full-height' : ''
+        }`}
         role="dialog"
         aria-modal="true"
         aria-label={title}
@@ -23,7 +32,10 @@ export function ModalSheet({ children, onClose, title }) {
       >
         <div className="modal-sheet__handle" aria-hidden="true" />
         <div className="modal-sheet__header">
-          <h2>{title}</h2>
+          <div>
+            {eyebrow ? <p className="modal-sheet__eyebrow">{eyebrow}</p> : null}
+            <h2>{title}</h2>
+          </div>
           <button
             autoFocus
             className="icon-button"
