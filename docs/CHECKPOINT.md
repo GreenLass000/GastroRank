@@ -4,63 +4,70 @@
 - 2026-05-10
 
 ## Estado actual
-El ciclo de trabajo planificado para este repo queda cerrado en código.
+El repo ya no está en espera.
 
-Resumen fiable de cierre:
+Estado real de continuidad:
+
+- existe un nuevo bloque activo de frontend
+- el documento rector del bloque es `docs/PLAN_FRONTEND_MAESTRO.md`
+- el checklist ejecutable del bloque es `docs/CHECKLIST_TECNICO.md`
+- el alcance aprobado mezcla:
+  - modularización del estado y shell
+  - fixes UX visibles de `TODO.md`
+  - deuda técnica prioritaria del audit
+  - hardening de sesión por fases
+
+Base ya existente que se debe preservar mientras avanza el bloque:
 
 - autenticación operativa con registro, login por `usuario o correo`, `auth/me`, cambio de contraseña y logout
-- backend PostgreSQL + Drizzle funcionando en Docker
-- `Comunidad` y `Perfil` cerrados para el alcance actual
-- feed social, follows, recomendaciones, listas, comentarios, reacciones y logros verificados en backend
-- controles de acceso sobre entradas `private` endurecidos y verificados con `403`
+- backend PostgreSQL + Drizzle funcionando
+- feed social, follows, recomendaciones, listas, comentarios, reacciones y logros ya implementados
 - uploads reales de imágenes implementados
 - paginación real del feed implementada
-- partición principal de estilos completada
-- `Inicio`, `Rankings`, `Mapa`, `Comunidad` y `Perfil` quedan cerrados para el alcance actual
-
-Verificaciones ejecutadas en esta línea de trabajo:
-
-- `npm run lint`
-- `npm run build`
-- verificación backend real contra Docker/PostgreSQL en `http://127.0.0.1:3333`
+- `Inicio`, `Rankings`, `Mapa`, `Comunidad` y `Perfil` ya funcionales, aunque con deuda estructural y UX pendiente
 
 ## Estado de continuidad
-No queda ninguna fase activa del plan anterior.
+Sí hay una fase activa.
 
-Este repo queda en estado de espera:
+Bloque activo:
+- plan maestro frontend
+- prioridad alta en modularización, mapas, rankings, comunidad, búsqueda global y sesión
 
-- a la espera de nuevos cambios solicitados por el usuario
-- a la espera de un nuevo plan si aparece un nuevo bloque de producto
+Siguiente fase aprobada:
+- `Fase 0. Continuidad documental`
+- tras cerrarla, continuar con `Fase 1. Estabilidad inmediata`
 
-Hasta que exista ese nuevo plan, no se debe reabrir una auditoría amplia ni reconstruir hojas de ruta antiguas.
+Regla actual:
+- no volver a describir el repo como “cerrado” hasta que este bloque termine de verdad
+- no reabrir auditorías nuevas mientras el plan maestro siga vigente salvo petición explícita
 
 ## Cómo retomar
 Si se retoma el trabajo en una sesión futura:
 
 1. leer este archivo
-2. leer `TODO.md`
-3. decidir una de estas rutas:
-   - fix puntual
-   - ajuste visual
-   - verificación específica
-   - nuevo bloque de producto con nuevo plan
+2. leer `docs/PLAN_FRONTEND_MAESTRO.md`
+3. leer `docs/CHECKLIST_TECNICO.md`
+4. leer `TODO.md`
+5. ejecutar solo la siguiente fase abierta del checklist
 
 ## Próximo paso por defecto
-No hay siguiente fase pendiente.
-
-El siguiente paso natural solo puede ser uno de estos:
-
-- corregir una regresión concreta detectada
-- implementar un cambio nuevo pedido por el usuario
-- redactar un nuevo plan si entra trabajo nuevo suficientemente grande
+El siguiente paso natural es:
+- cerrar `Fase 0. Continuidad documental` si queda algo pendiente
+- empezar `Fase 1. Estabilidad inmediata`
 
 ## Archivos de referencia
 - `AGENTS.md`
 - `TODO.md`
-- `docs/ARQUITECTURA_SQLITE.md`
+- `docs/PLAN_FRONTEND_MAESTRO.md`
+- `docs/CHECKLIST_TECNICO.md`
+- `docs/audits/whole-frontend-analize-code.md`
+- `docs/CAMBIOS_TAB_RANKINGS.md`
+- `docs/CAMBIOS_MODAL_ANADIR_PLATO.md`
 - `server/app.js`
 - `src/providers/AppStateProvider.jsx`
 - `src/App.jsx`
 
 ## Nota
-Los documentos de plan cerrados se han retirado del repo para evitar continuidad falsa sobre fases ya terminadas.
+Los anexos viejos siguen valiendo como detalle de ejecución, pero la prioridad y el orden oficial están ahora en:
+- `docs/PLAN_FRONTEND_MAESTRO.md`
+- `docs/CHECKLIST_TECNICO.md`

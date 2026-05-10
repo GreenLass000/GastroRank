@@ -1,26 +1,71 @@
-import { useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import './App.css'
-import { EntityDetailSheet } from './components/details/EntityDetailSheet.jsx'
 import { LoadingOverlay } from './components/feedback/LoadingOverlay.jsx'
 import { StatusBanner } from './components/feedback/StatusBanner.jsx'
 import { ToastCenter } from './components/feedback/ToastCenter.jsx'
-import { AddDishWizard } from './components/forms/AddDishWizard.jsx'
-import { RestaurantForm } from './components/forms/RestaurantForm.jsx'
 import { BottomNav } from './components/layout/BottomNav.jsx'
 import { FloatingActionButton } from './components/layout/FloatingActionButton.jsx'
 import { ModalSheet } from './components/layout/ModalSheet.jsx'
-import { GlobalSearchPanel } from './components/search/GlobalSearchPanel.jsx'
 import { fetchPublicShare } from './lib/api.js'
 import { NAV_ITEMS } from './lib/constants.js'
 import { useAppState } from './hooks/useAppState.js'
 import { useTheme } from './hooks/useTheme.js'
-import { HomeScreen } from './screens/HomeScreen.jsx'
-import { AuthScreen } from './screens/AuthScreen.jsx'
-import { ComunidadScreen } from './screens/ComunidadScreen.jsx'
-import { MapScreen } from './screens/MapScreen.jsx'
-import { ProfileScreen } from './screens/ProfileScreen.jsx'
-import { RankingsScreen } from './screens/RankingsScreen.jsx'
-import { ReportScreen } from './screens/ReportScreen.jsx'
+
+const EntityDetailSheet = lazy(() =>
+  import('./components/details/EntityDetailSheet.jsx').then((module) => ({
+    default: module.EntityDetailSheet,
+  })),
+)
+const AddDishWizard = lazy(() =>
+  import('./components/forms/AddDishWizard.jsx').then((module) => ({
+    default: module.AddDishWizard,
+  })),
+)
+const RestaurantForm = lazy(() =>
+  import('./components/forms/RestaurantForm.jsx').then((module) => ({
+    default: module.RestaurantForm,
+  })),
+)
+const GlobalSearchPanel = lazy(() =>
+  import('./components/search/GlobalSearchPanel.jsx').then((module) => ({
+    default: module.GlobalSearchPanel,
+  })),
+)
+const HomeScreen = lazy(() =>
+  import('./screens/HomeScreen.jsx').then((module) => ({
+    default: module.HomeScreen,
+  })),
+)
+const AuthScreen = lazy(() =>
+  import('./screens/AuthScreen.jsx').then((module) => ({
+    default: module.AuthScreen,
+  })),
+)
+const ComunidadScreen = lazy(() =>
+  import('./screens/ComunidadScreen.jsx').then((module) => ({
+    default: module.ComunidadScreen,
+  })),
+)
+const MapScreen = lazy(() =>
+  import('./screens/MapScreen.jsx').then((module) => ({
+    default: module.MapScreen,
+  })),
+)
+const ProfileScreen = lazy(() =>
+  import('./screens/ProfileScreen.jsx').then((module) => ({
+    default: module.ProfileScreen,
+  })),
+)
+const RankingsScreen = lazy(() =>
+  import('./screens/RankingsScreen.jsx').then((module) => ({
+    default: module.RankingsScreen,
+  })),
+)
+const ReportScreen = lazy(() =>
+  import('./screens/ReportScreen.jsx').then((module) => ({
+    default: module.ReportScreen,
+  })),
+)
 
 const SCREEN_COMPONENTS = {
   home: HomeScreen,
@@ -68,6 +113,16 @@ function writeNavigationState(nextScreen, shareToken = '') {
   const nextPath = normalizedScreen === 'report' ? '/informe' : '/'
   const nextUrl = `${nextPath}${nextQuery ? `?${nextQuery}` : ''}`
   window.history.pushState({}, '', nextUrl)
+}
+
+function ScreenFallback({ message = 'Cargando...' }) {
+  return (
+    <section className="screen" aria-label={message}>
+      <article className="surface-card">
+        <strong>{message}</strong>
+      </article>
+    </section>
+  )
 }
 
 function App() {
@@ -345,10 +400,12 @@ function App() {
             detail={`Error al cargar ❌ — ${shareError}`}
           />
         ) : null}
-        {shouldShowAuthScreen ? <AuthScreen /> : null}
-        {(!requiresAuth || authChecked) && (!requiresAuth || currentUser)
-          ? renderActiveScreen()
-          : null}
+        <Suspense fallback={<ScreenFallback />}>
+          {shouldShowAuthScreen ? <AuthScreen /> : null}
+          {(!requiresAuth || authChecked) && (!requiresAuth || currentUser)
+            ? renderActiveScreen()
+            : null}
+        </Suspense>
       </main>
 
       {!shareToken && currentUser ? (
@@ -384,10 +441,12 @@ function App() {
           immersive
           onClose={() => setIsSearchOpen(false)}
         >
-          <GlobalSearchPanel
-            onClose={() => setIsSearchOpen(false)}
-            onOpenEntity={openEntityDetail}
-          />
+          <Suspense fallback={<ScreenFallback message="Cargando búsqueda..." />}>
+            <GlobalSearchPanel
+              onClose={() => setIsSearchOpen(false)}
+              onOpenEntity={openEntityDetail}
+            />
+          </Suspense>
         </ModalSheet>
       ) : null}
 
@@ -400,11 +459,13 @@ function App() {
             setEntityDetailTarget(null)
           }}
         >
-          <EntityDetailSheet
-            key={`${entityDetailTarget.type}:${entityDetailTarget.id}`}
-            target={entityDetailTarget}
-            onClose={() => setEntityDetailTarget(null)}
-          />
+          <Suspense fallback={<ScreenFallback message="Cargando detalle..." />}>
+            <EntityDetailSheet
+              key={`${entityDetailTarget.type}:${entityDetailTarget.id}`}
+              target={entityDetailTarget}
+              onClose={() => setEntityDetailTarget(null)}
+            />
+          </Suspense>
         </ModalSheet>
       ) : null}
 
@@ -419,14 +480,16 @@ function App() {
             setIsDishWizardOpen(false)
           }}
         >
-          <AddDishWizard
-            onClose={() => {
-              setIsDishWizardOpen(false)
-            }}
-            onOpenRestaurantForm={() => {
-              setIsRestaurantFormOpen(true)
-            }}
-          />
+          <Suspense fallback={<ScreenFallback message="Cargando formulario..." />}>
+            <AddDishWizard
+              onClose={() => {
+                setIsDishWizardOpen(false)
+              }}
+              onOpenRestaurantForm={() => {
+                setIsRestaurantFormOpen(true)
+              }}
+            />
+          </Suspense>
         </ModalSheet>
       ) : null}
 
@@ -441,13 +504,15 @@ function App() {
             setRestaurantDraftLocation(null)
           }}
         >
-          <RestaurantForm
-            initialLocation={restaurantDraftLocation}
-            onClose={() => {
-              setIsRestaurantFormOpen(false)
-              setRestaurantDraftLocation(null)
-            }}
-          />
+          <Suspense fallback={<ScreenFallback message="Cargando restaurante..." />}>
+            <RestaurantForm
+              initialLocation={restaurantDraftLocation}
+              onClose={() => {
+                setIsRestaurantFormOpen(false)
+                setRestaurantDraftLocation(null)
+              }}
+            />
+          </Suspense>
         </ModalSheet>
       ) : null}
     </div>

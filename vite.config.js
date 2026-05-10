@@ -11,6 +11,17 @@ const apiProxy = {
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules/leaflet')) {
+            return 'leaflet'
+          }
+        },
+      },
+    },
+  },
   server: {
     host: '0.0.0.0',
     proxy: apiProxy,

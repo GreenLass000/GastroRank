@@ -7,30 +7,28 @@ This repository is a Vite + React application with PostgreSQL + Drizzle ORM as t
 - `TODO.md`: full product brief and final acceptance criteria
 - `AGENTS.md`: contributor rules, repository expectations, and document map
 - `docs/CHECKPOINT.md`: current project memory and current closure state
-- `docs/ARQUITECTURA_SQLITE.md`: SQLite layout, commands, schema notes, and persistence rules
-- `docs/CHECKLIST_TECNICO.md`: file-by-file and component-by-component implementation checklist
-- `server/app.js`: local API over SQLite for frontend hydration and first write flows
+- `docs/PLAN_FRONTEND_MAESTRO.md`: active master plan for the current frontend block
+- `docs/CHECKLIST_TECNICO.md`: execution checklist for the active plan
+- `server/app.js`: local API for frontend hydration, auth, social flows and share tokens
 
-When resuming the project after a gap or in a new chat, read `docs/CHECKPOINT.md` first, then `TODO.md`, then the relevant file in `docs/`. `docs/CHECKPOINT.md` is the source of truth for current continuity state and next recommended step. When work touches business logic, rankings, forms, persistence, maps, exports, edit flows, or item details, check `TODO.md` first, then use the corresponding document in `docs/` to decide order and scope. When work touches saved entities, schema, seed data, or public share tokens, inspect `server/db/` and `docs/ARQUITECTURA_SQLITE.md` before changing frontend code.
-If `docs/CHECKPOINT.md` already says implementation is closed in code, do not restart a broad audit; limit the session to verification or targeted fixes.
+When resuming the project after a gap or in a new chat, read `docs/CHECKPOINT.md` first, then `docs/PLAN_FRONTEND_MAESTRO.md`, then `docs/CHECKLIST_TECNICO.md`, then `TODO.md`, then the relevant file in `docs/`. `docs/CHECKPOINT.md` is the source of truth for current continuity state and next recommended step. When work touches business logic, rankings, forms, persistence, maps, exports, edit flows, or item details, check `TODO.md` first, then use the active plan documents in `docs/` to decide order and scope. When work touches saved entities, schema, seed data, auth/session, or public share tokens, inspect `server/db/` and `server/app.js` before changing frontend code.
 
 ## Current Continuity Snapshot
 Current status:
-- the planned implementation cycle is finished in code
-- auth, social backend, uploads, rankings/map, and community/profile redesign are closed for the current scope
-- the repository is now in maintenance state pending new product changes or a new plan
+- there is an active frontend block with a new master plan
+- the repository is not in maintenance-only mode right now
+- the current block combines modularization, visible UX fixes, technical debt and session hardening
 
 Current next-step assumption:
 - start from `docs/CHECKPOINT.md`
-- do not reopen old phase-by-phase plans
-- only do one of these until a new plan exists:
-  - targeted bug fixes
-  - visual corrections
-  - small verification tasks
-  - new work explicitly requested by the user
+- then continue with `docs/PLAN_FRONTEND_MAESTRO.md`
+- then execute the next unchecked block in `docs/CHECKLIST_TECNICO.md`
+- do not reopen alternative broad plans while this one is active unless the user explicitly replaces it
 
 Current files that matter most for the next block:
 - `docs/CHECKPOINT.md`
+- `docs/PLAN_FRONTEND_MAESTRO.md`
+- `docs/CHECKLIST_TECNICO.md`
 - `TODO.md`
 - `src/App.jsx`
 - `src/providers/AppStateProvider.jsx`
@@ -66,7 +64,7 @@ Keep the data model in `TODO.md` exact: users, groups, group members, restaurant
 - filters, rankings, CSV export, printable report, share links, and seed data must keep working
 - when geolocation is unavailable, the map UX must still remain usable with Valladolid as fallback center
 
-SQLite is the source of truth for persisted domain entities. Use local storage only for UI-only state such as filters, theme, and temporary drafts unless a task explicitly requires database persistence. If a change affects rankings, maps, forms, or persistence, verify behavior against `TODO.md` before merging.
+PostgreSQL + Drizzle is the source of truth for persisted domain entities. Use local storage only for UI-only state such as filters, theme, and temporary drafts unless a task explicitly requires database persistence. If a change affects rankings, maps, forms, auth/session or persistence, verify behavior against `TODO.md` before merging.
 
 ## Build, Lint, and Local Development
 - before assuming `node`/`npm` are unavailable, try exporting the environment PATH that includes the local Node install used in this workspace, for example:
@@ -76,11 +74,8 @@ SQLite is the source of truth for persisted domain entities. Use local storage o
 - `npm run build`: create the production bundle in `dist/`
 - `npm run preview`: preview the built app locally
 - `npm run lint`: run ESLint
-- `npm run api:dev`: start the local SQLite read API on port `3030`
-- `npm run db:init`: create the SQLite schema in `server/db/data/ranking_gastronomico.sqlite`
-- `npm run db:seed`: load the seed data into SQLite
-- `npm run db:reset`: recreate the local SQLite database from schema + seed
-- `npm run db:verify`: inspect tables and row counts
+- `npm run api:dev`: start the local API on port `3030`
+- database artifacts and commands must be aligned with the current PostgreSQL + Drizzle setup in `server/db/`
 
 ## Coding Style & Naming
 Use function components, ES modules, and 2-space indentation. Prefer `PascalCase` for components, `camelCase` for functions and state, and descriptive Spanish labels for user-facing text. Follow `eslint.config.js`; do not leave unused variables unless intentionally prefixed for the configured ignore rule.
@@ -91,6 +86,7 @@ There is no automated test suite yet, so every change must pass `npm run lint` a
 ## Continuation Rule
 Before starting any new implementation block, update or at least verify:
 - `docs/CHECKPOINT.md`
+- `docs/PLAN_FRONTEND_MAESTRO.md` if priorities or scope changed
 - `docs/CHECKLIST_TECNICO.md`
 - `AGENTS.md` when the current milestone status or recommended starting point changes
 
