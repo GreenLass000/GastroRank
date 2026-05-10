@@ -19,8 +19,6 @@
   position: sticky;
   top: 0;
   z-index: 700;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 255, 255, 0.82));
-  backdrop-filter: blur(14px);
 }
 
 .eyebrow {
