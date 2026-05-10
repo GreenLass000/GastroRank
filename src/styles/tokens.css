@@ -45,3 +45,33 @@ html[data-theme='dark'] {
     linear-gradient(180deg, #0f0b12 0%, #17111a 42%, #1d1520 100%);
   --hero-overlay: linear-gradient(180deg, rgba(28, 20, 32, 0.16), rgba(15, 11, 18, 0.78));
 }
+
+html[data-theme-animating='true'] body,
+html[data-theme-animating='true'] .app-shell,
+html[data-theme-animating='true'] .topbar,
+html[data-theme-animating='true'] .surface-card,
+html[data-theme-animating='true'] .screen__hero,
+html[data-theme-animating='true'] .stat-card,
+html[data-theme-animating='true'] .list-card,
+html[data-theme-animating='true'] .ranking-card,
+html[data-theme-animating='true'] .map-card,
+html[data-theme-animating='true'] .settings-card,
+html[data-theme-animating='true'] .modal-sheet,
+html[data-theme-animating='true'] .shell-search-bar,
+html[data-theme-animating='true'] .bottom-nav,
+html[data-theme-animating='true'] .pill-button,
+html[data-theme-animating='true'] .chip,
+html[data-theme-animating='true'] .status-pill,
+html[data-theme-animating='true'] .theme-switch__track,
+html[data-theme-animating='true'] .theme-switch__thumb,
+html[data-theme-animating='true'] .theme-toggle,
+html[data-theme-animating='true'] .theme-toggle__button {
+  transition:
+    background 240ms ease,
+    background-color 240ms ease,
+    color 240ms ease,
+    border-color 240ms ease,
+    box-shadow 240ms ease,
+    opacity 240ms ease,
+    transform 240ms ease;
+}

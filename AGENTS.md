@@ -6,12 +6,13 @@ This repository is a Vite + React application with PostgreSQL + Drizzle ORM as t
 ## Where To Look First
 - `TODO.md`: full product brief and final acceptance criteria
 - `AGENTS.md`: contributor rules, repository expectations, and document map
+- `docs/DESIGNED.md`: manual lock for the redesign stage (`designed: true|false`)
 - `docs/CHECKPOINT.md`: current project memory and current closure state
 - `docs/PLAN_FRONTEND_MAESTRO.md`: active master plan for the current frontend block
 - `docs/CHECKLIST_TECNICO.md`: execution checklist for the active plan
 - `server/app.js`: local API for frontend hydration, auth, social flows and share tokens
 
-When resuming the project after a gap or in a new chat, read `docs/CHECKPOINT.md` first, then `docs/PLAN_FRONTEND_MAESTRO.md`, then `docs/CHECKLIST_TECNICO.md`, then `TODO.md`, then the relevant file in `docs/`. `docs/CHECKPOINT.md` is the source of truth for current continuity state and next recommended step. When work touches business logic, rankings, forms, persistence, maps, exports, edit flows, or item details, check `TODO.md` first, then use the active plan documents in `docs/` to decide order and scope. When work touches saved entities, schema, seed data, auth/session, or public share tokens, inspect `server/db/` and `server/app.js` before changing frontend code.
+When resuming the project after a gap or in a new chat, read `docs/CHECKPOINT.md` first, then `docs/DESIGNED.md`, then `docs/PLAN_FRONTEND_MAESTRO.md`, then `docs/CHECKLIST_TECNICO.md`, then `TODO.md`, then the relevant file in `docs/`. `docs/CHECKPOINT.md` is the source of truth for current continuity state and next recommended step. `docs/DESIGNED.md` is the source of truth for whether the redesign phase is still open. When work touches business logic, rankings, forms, persistence, maps, exports, edit flows, or item details, check `TODO.md` first, then use the active plan documents in `docs/` to decide order and scope. When work touches saved entities, schema, seed data, auth/session, or public share tokens, inspect `server/db/` and `server/app.js` before changing frontend code.
 
 ## Current Continuity Snapshot
 Current status:
@@ -21,11 +22,13 @@ Current status:
 
 Current next-step assumption:
 - start from `docs/CHECKPOINT.md`
+- then inspect `docs/DESIGNED.md`
 - then continue with `docs/PLAN_FRONTEND_MAESTRO.md`
 - then execute the next unchecked block in `docs/CHECKLIST_TECNICO.md`
 - do not reopen alternative broad plans while this one is active unless the user explicitly replaces it
 
 Current files that matter most for the next block:
+- `docs/DESIGNED.md`
 - `docs/CHECKPOINT.md`
 - `docs/PLAN_FRONTEND_MAESTRO.md`
 - `docs/CHECKLIST_TECNICO.md`
@@ -85,9 +88,18 @@ There is no automated test suite yet, so every change must pass `npm run lint` a
 
 ## Continuation Rule
 Before starting any new implementation block, update or at least verify:
+- `docs/DESIGNED.md`
 - `docs/CHECKPOINT.md`
 - `docs/PLAN_FRONTEND_MAESTRO.md` if priorities or scope changed
 - `docs/CHECKLIST_TECNICO.md`
 - `AGENTS.md` when the current milestone status or recommended starting point changes
+
+## Redesign Lock
+- `docs/DESIGNED.md` must contain a single line with `designed: true` or `designed: false`.
+- Default value is `designed: false`.
+- While `designed: false`, contributors must treat the global redesign as still in progress.
+- While `designed: false`, do not continue automatically with the phases in `docs/PLAN_FRONTEND_MAESTRO.md` or `docs/CHECKLIST_TECNICO.md`.
+- The only exception is when the user explicitly asks to continue a phase or implement plan work anyway.
+- The redesign is only considered closed when the user manually changes the file to `designed: true`.
 
 This repository should always preserve a resumable state for future Codex sessions.

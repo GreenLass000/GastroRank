@@ -137,7 +137,7 @@ function App() {
   const [sharePayload, setSharePayload] = useState(null)
   const [shareError, setShareError] = useState('')
   const [isShareLoading, setIsShareLoading] = useState(false)
-  const { themeMode, resolvedTheme, setThemeMode } = useTheme()
+  const { resolvedTheme, setThemeMode } = useTheme()
   const { authChecked, currentUser, isLoading, loadError, toast, clearToast } =
     useAppState()
 
@@ -147,38 +147,7 @@ function App() {
   const requiresAuth = !isPublicShareView
   const shouldShowAuthScreen = requiresAuth && authChecked && !currentUser
   const showTopbar = isPublicShareView || Boolean(currentUser)
-  const topbarCopy = {
-    home: {
-      eyebrow: 'Tu mesa',
-      title: `Hola${currentUser?.nombre ? `, ${currentUser.nombre}` : ''}`,
-      subtitle: 'Resumen editorial de platos, top semanal y actividad reciente.',
-    },
-    community: {
-      eyebrow: 'Descubrir',
-      title: 'Explorar',
-      subtitle: 'Feed social, amigos y hallazgos públicos en una sola vista.',
-    },
-    map: {
-      eyebrow: 'Territorio',
-      title: 'Mapa',
-      subtitle: 'Restaurantes cerca, selección rápida y contexto espacial.',
-    },
-    rankings: {
-      eyebrow: 'Leaderboards',
-      title: 'Rankings',
-      subtitle: 'Comparativas compactas para abrir detalle sin perder contexto.',
-    },
-    profile: {
-      eyebrow: 'Cuenta',
-      title: 'Perfil',
-      subtitle: `Logros, actividad y ajustes de ${resolvedTheme === 'dark' ? 'modo oscuro' : 'apariencia'}.`,
-    },
-    report: {
-      eyebrow: 'Informe',
-      title: 'Reporte',
-      subtitle: 'Vista compartible lista para revisar o imprimir.',
-    },
-  }
+  const isHomeScreen = activeScreen === 'home'
 
   function handleScreenChange(nextScreen) {
     const normalizedScreen = normalizeScreenId(nextScreen)
@@ -345,41 +314,48 @@ function App() {
   return (
     <div className="app-shell">
       {showTopbar ? (
-        <header className="topbar">
-          <div className="topbar__meta">
-            <span className="topbar__label">{topbarCopy[activeScreen]?.eyebrow || 'GastroRank'}</span>
-            <h1>{topbarCopy[activeScreen]?.title || 'GastroRank'}</h1>
-            <p>{topbarCopy[activeScreen]?.subtitle || 'Tu app gastronómica social.'}</p>
-          </div>
+        <header className={`topbar${isHomeScreen ? ' topbar--home' : ''}`}>
+          {isHomeScreen && !shareToken ? (
+            <button
+              className="shell-search-bar"
+              type="button"
+              aria-label="Buscar restaurantes, platos o perfiles"
+              onClick={() => setIsSearchOpen(true)}
+            >
+              <span className="shell-search-bar__label">
+                Buscar restaurantes, platos o perfiles
+              </span>
+              <span className="shell-search-bar__hint">Inicio</span>
+            </button>
+          ) : (
+            <div className="topbar__spacer" aria-hidden="true" />
+          )}
           <div className="topbar__actions">
             {!shareToken ? (
-              <>
-                <button
-                  className="shell-button"
-                  type="button"
-                  aria-label={`Tema actual: ${themeMode}`}
-                  onClick={() =>
-                    setThemeMode(
-                      themeMode === 'system'
-                        ? 'light'
-                        : themeMode === 'light'
-                          ? 'dark'
-                          : 'system',
-                    )
-                  }
-                >
-                  {themeMode === 'dark' ? '🌙' : themeMode === 'light' ? '☀️' : '🖥️'}
-                  <span>{themeMode === 'system' ? 'Sistema' : themeMode === 'dark' ? 'Oscuro' : 'Claro'}</span>
-                </button>
-                <button
-                  className="icon-button"
-                  type="button"
-                  aria-label="Buscar"
-                  onClick={() => setIsSearchOpen(true)}
-                >
-                  🔎
-                </button>
-              </>
+              <button
+                className={`theme-switch${resolvedTheme === 'dark' ? ' theme-switch--dark' : ''}`}
+                type="button"
+                role="switch"
+                aria-checked={resolvedTheme === 'dark'}
+                aria-label={
+                  resolvedTheme === 'dark'
+                    ? 'Cambiar a tema claro'
+                    : 'Cambiar a tema oscuro'
+                }
+                onClick={() =>
+                  setThemeMode(resolvedTheme === 'dark' ? 'light' : 'dark')
+                }
+              >
+                <span className="theme-switch__track">
+                  <span className="theme-switch__icon theme-switch__icon--sun" aria-hidden="true">
+                    ☀
+                  </span>
+                  <span className="theme-switch__thumb" aria-hidden="true" />
+                  <span className="theme-switch__icon theme-switch__icon--moon" aria-hidden="true">
+                    ☾
+                  </span>
+                </span>
+              </button>
             ) : null}
           </div>
         </header>

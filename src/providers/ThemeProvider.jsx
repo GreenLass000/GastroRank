@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ThemeContext } from '../context/themeContext.js'
 import { STORAGE_KEYS } from '../lib/constants.js'
 import { readLocalStorage, writeLocalStorage } from '../lib/storage.js'
@@ -16,6 +16,8 @@ export function ThemeProvider({ children }) {
     readLocalStorage(STORAGE_KEYS.themeMode, 'system'),
   )
   const [systemTheme, setSystemTheme] = useState(getSystemTheme)
+  const hasMountedRef = useRef(false)
+  const animationTimeoutRef = useRef(0)
 
   useEffect(() => {
     writeLocalStorage(STORAGE_KEYS.themeMode, themeMode)
@@ -40,10 +42,26 @@ export function ThemeProvider({ children }) {
   const resolvedTheme = themeMode === 'system' ? systemTheme : themeMode
 
   useEffect(() => {
+    if (hasMountedRef.current) {
+      document.documentElement.dataset.themeAnimating = 'true'
+      window.clearTimeout(animationTimeoutRef.current)
+      animationTimeoutRef.current = window.setTimeout(() => {
+        delete document.documentElement.dataset.themeAnimating
+      }, 280)
+    }
+
     document.documentElement.dataset.theme = resolvedTheme
     document.documentElement.dataset.themeMode = themeMode
     document.body.dataset.theme = resolvedTheme
+    hasMountedRef.current = true
   }, [resolvedTheme, themeMode])
+
+  useEffect(
+    () => () => {
+      window.clearTimeout(animationTimeoutRef.current)
+    },
+    [],
+  )
 
   const value = useMemo(
     () => ({

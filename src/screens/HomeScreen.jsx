@@ -20,7 +20,6 @@ export function HomeScreen({
   onNavigate,
   onOpenAddDish,
   onOpenEntity,
-  onOpenSearch,
 }) {
   const {
     categories,
@@ -145,16 +144,6 @@ export function HomeScreen({
           </div>
         </div>
       </article>
-
-      <button
-        className="home-search-bar"
-        type="button"
-        onClick={onOpenSearch}
-        aria-label="Buscar restaurante o plato"
-      >
-        <span aria-hidden="true">🔍</span>
-        <span>Buscar restaurante o plato...</span>
-      </button>
 
       <div className="home-section-grid">
         <div>
