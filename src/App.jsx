@@ -9,7 +9,6 @@ import { ModalSheet } from './components/layout/ModalSheet.jsx'
 import { fetchPublicShare } from './lib/api.js'
 import { NAV_ITEMS } from './lib/constants.js'
 import { useAppState } from './hooks/useAppState.js'
-import { useTheme } from './hooks/useTheme.js'
 
 const EntityDetailSheet = lazy(() =>
   import('./components/details/EntityDetailSheet.jsx').then((module) => ({
@@ -137,7 +136,6 @@ function App() {
   const [sharePayload, setSharePayload] = useState(null)
   const [shareError, setShareError] = useState('')
   const [isShareLoading, setIsShareLoading] = useState(false)
-  const { resolvedTheme, setThemeMode } = useTheme()
   const { authChecked, currentUser, isLoading, loadError, toast, clearToast } =
     useAppState()
 
@@ -146,8 +144,8 @@ function App() {
   const isPublicShareView = activeScreen === 'report' && Boolean(shareToken)
   const requiresAuth = !isPublicShareView
   const shouldShowAuthScreen = requiresAuth && authChecked && !currentUser
-  const showTopbar = isPublicShareView || Boolean(currentUser)
   const isHomeScreen = activeScreen === 'home'
+  const showTopbar = Boolean(currentUser) && isHomeScreen && !shareToken
 
   function handleScreenChange(nextScreen) {
     const normalizedScreen = normalizeScreenId(nextScreen)
@@ -315,49 +313,24 @@ function App() {
     <div className="app-shell">
       {showTopbar ? (
         <header className={`topbar${isHomeScreen ? ' topbar--home' : ''}`}>
-          {isHomeScreen && !shareToken ? (
-            <button
-              className="shell-search-bar"
-              type="button"
-              aria-label="Buscar restaurantes, platos o perfiles"
-              onClick={() => setIsSearchOpen(true)}
-            >
+          <button
+            className="shell-search-bar"
+            type="button"
+            aria-label="Buscar restaurantes, platos o perfiles"
+            onClick={() => setIsSearchOpen(true)}
+          >
+            <span className="shell-search-bar__ornament" aria-hidden="true">
+              <span className="shell-search-bar__spark shell-search-bar__spark--orange" />
+              <span className="shell-search-bar__spark shell-search-bar__spark--purple" />
+            </span>
+            <span className="shell-search-bar__content">
+              <span className="shell-search-bar__eyebrow">Explorar rápido</span>
               <span className="shell-search-bar__label">
                 Buscar restaurantes, platos o perfiles
               </span>
-              <span className="shell-search-bar__hint">Inicio</span>
-            </button>
-          ) : (
-            <div className="topbar__spacer" aria-hidden="true" />
-          )}
-          <div className="topbar__actions">
-            {!shareToken ? (
-              <button
-                className={`theme-switch${resolvedTheme === 'dark' ? ' theme-switch--dark' : ''}`}
-                type="button"
-                role="switch"
-                aria-checked={resolvedTheme === 'dark'}
-                aria-label={
-                  resolvedTheme === 'dark'
-                    ? 'Cambiar a tema claro'
-                    : 'Cambiar a tema oscuro'
-                }
-                onClick={() =>
-                  setThemeMode(resolvedTheme === 'dark' ? 'light' : 'dark')
-                }
-              >
-                <span className="theme-switch__track">
-                  <span className="theme-switch__icon theme-switch__icon--sun" aria-hidden="true">
-                    ☀
-                  </span>
-                  <span className="theme-switch__thumb" aria-hidden="true" />
-                  <span className="theme-switch__icon theme-switch__icon--moon" aria-hidden="true">
-                    ☾
-                  </span>
-                </span>
-              </button>
-            ) : null}
-          </div>
+            </span>
+            <span className="shell-search-bar__badge">Abrir</span>
+          </button>
         </header>
       ) : null}
 
