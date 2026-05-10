@@ -64,24 +64,20 @@ function isRestaurantInsideBounds(restaurant, bounds) {
 function buildMapRestaurants({
   categories,
   defaultPinStyle,
-  dishEntries,
+  entriesByRestaurantId,
+  featuredEntryByRestaurantId,
   dishTypes,
   restaurants,
   userPosition,
 }) {
+  const categoriesById = Object.fromEntries(categories.map((category) => [category.id, category]))
+  const dishTypesById = Object.fromEntries(dishTypes.map((dishType) => [dishType.id, dishType]))
+
   return restaurants.map((restaurant) => {
-    const restaurantEntries = dishEntries.filter(
-      (entry) => entry.restaurant_id === restaurant.id,
-    )
-    const bestEntry = [...restaurantEntries].sort(
-      (left, right) => right.puntuacion_general - left.puntuacion_general,
-    )[0]
-    const bestDishType = dishTypes.find(
-      (dishType) => dishType.id === bestEntry?.tipo_plato_id,
-    )
-    const bestCategory = categories.find(
-      (category) => category.id === bestEntry?.categoria_id,
-    )
+    const restaurantEntries = entriesByRestaurantId[restaurant.id] ?? []
+    const bestEntry = featuredEntryByRestaurantId[restaurant.id] ?? null
+    const bestDishType = dishTypesById[bestEntry?.tipo_plato_id]
+    const bestCategory = categoriesById[bestEntry?.categoria_id]
     const distanceFromUserMeters = calculateDistanceMeters(userPosition, restaurant)
     const averageScore = calculateAverageScore(restaurantEntries)
 
@@ -120,7 +116,6 @@ export function MapScreen({ onCreateRestaurantAtLocation, onOpenEntity }) {
   } = useAppState()
   const [selectedRestaurantId, setSelectedRestaurantId] = useState('')
   const [draftLocation, setDraftLocation] = useState(null)
-  const [isFullscreen, setIsFullscreen] = useState(false)
   const [isListExpanded, setIsListExpanded] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchSuggestions, setSearchSuggestions] = useState([])
@@ -181,12 +176,37 @@ export function MapScreen({ onCreateRestaurantAtLocation, onOpenEntity }) {
 
     return restaurants.filter((restaurant) => filteredRestaurantIds.has(restaurant.id))
   }, [filteredEntriesWithoutRadius, restaurants])
+  const entriesByRestaurantId = useMemo(
+    () =>
+      filteredEntriesWithoutRadius.reduce((acc, entry) => {
+        acc[entry.restaurant_id] ??= []
+        acc[entry.restaurant_id].push(entry)
+        return acc
+      }, {}),
+    [filteredEntriesWithoutRadius],
+  )
+  const featuredEntryByRestaurantId = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(entriesByRestaurantId).map(([restaurantId, entries]) => [
+          restaurantId,
+          [...entries].sort(
+            (left, right) =>
+              (right.puntuacion_general ?? Number.NEGATIVE_INFINITY) -
+                (left.puntuacion_general ?? Number.NEGATIVE_INFINITY) ||
+              new Date(right.created_at) - new Date(left.created_at),
+          )[0] ?? null,
+        ]),
+      ),
+    [entriesByRestaurantId],
+  )
   const mapRestaurants = useMemo(
     () =>
       buildMapRestaurants({
         categories,
         defaultPinStyle,
-        dishEntries: filteredEntriesWithoutRadius,
+        entriesByRestaurantId,
+        featuredEntryByRestaurantId,
         dishTypes,
         restaurants: filteredRestaurantsWithoutRadius.filter((restaurant) =>
           hasValidCoordinates(restaurant),
@@ -197,7 +217,8 @@ export function MapScreen({ onCreateRestaurantAtLocation, onOpenEntity }) {
       categories,
       defaultPinStyle,
       dishTypes,
-      filteredEntriesWithoutRadius,
+      entriesByRestaurantId,
+      featuredEntryByRestaurantId,
       filteredRestaurantsWithoutRadius,
       userPosition,
     ],
@@ -478,73 +499,8 @@ export function MapScreen({ onCreateRestaurantAtLocation, onOpenEntity }) {
         />
       ) : null}
 
-      <div className="field--autocomplete map-search">
-        <label className="map-search__field">
-          <span className="sr-only">Buscar zona o lugar</span>
-          <input
-            type="search"
-            value={searchQuery}
-            placeholder="🔍 Buscar zona, barrio o lugar..."
-            onChange={(event) => setSearchQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && searchSuggestions[0]) {
-                event.preventDefault()
-                handleLocationSelection(searchSuggestions[0])
-              }
-            }}
-          />
-        </label>
-        {searchFeedback.message ? (
-          <p className={`map-search__feedback map-search__feedback--${searchFeedback.tone || 'info'}`}>
-            {searchFeedback.message}
-          </p>
-        ) : null}
-        {searchSuggestions.length > 0 ? (
-          <div className="suggestion-dropdown">
-            {searchSuggestions.map((suggestion) => (
-              <button
-                key={suggestion.id}
-                className="suggestion-card"
-                type="button"
-                onClick={() => handleLocationSelection(suggestion)}
-              >
-                <strong>{suggestion.name}</strong>
-                <span>{suggestion.address || 'Ubicación seleccionable'}</span>
-              </button>
-            ))}
-          </div>
-        ) : null}
-      </div>
-
-      <div className="map-pin-style-selector" role="tablist" aria-label="Estilo de pins">
-        {PIN_STYLE_OPTIONS.map((option) => (
-          <button
-            key={option.id}
-            className={`map-pin-style-chip${
-              defaultPinStyle === option.id ? ' map-pin-style-chip--active' : ''
-            }`}
-            type="button"
-            role="tab"
-            aria-selected={defaultPinStyle === option.id}
-            onClick={() => setDefaultPinStyle(option.id)}
-          >
-            <span
-              className={`map-pin-style-chip__preview map-pin-style-chip__preview--${option.previewKind} ${
-                option.id === 'Puntuación'
-                  ? 'map-pin-style-chip__preview--good'
-                  : 'map-pin-style-chip__preview--neutral'
-              }`}
-              aria-hidden="true"
-            >
-              {option.previewText}
-            </span>
-            <span>{option.label}</span>
-          </button>
-        ))}
-      </div>
-
       <div
-        className={`map-stage${isFullscreen ? ' map-stage--fullscreen' : ''}${
+        className={`map-stage map-stage--immersive${
           !hasRegisteredRestaurants ? ' map-stage--disabled' : ''
         }`}
       >
@@ -583,29 +539,98 @@ export function MapScreen({ onCreateRestaurantAtLocation, onOpenEntity }) {
             viewportKey={viewportRequest.key}
             zoom={viewportRequest.zoom}
           >
-            <div className="map-screen__overlay map-screen__overlay--top">
-              <span className="map-counter-chip">
-                {visibleRestaurants.length} restaurantes en esta zona
-              </span>
-              <button
-                className="map-floating-button map-floating-button--top"
-                type="button"
-                onClick={() => setIsFullscreen((current) => !current)}
-              >
-                {isFullscreen ? '✕ Cerrar' : '⛶ Pantalla completa'}
-              </button>
+            <div className="map-screen__overlay map-screen__overlay--header">
+              <div className="field--autocomplete map-search map-search--floating">
+                <label className="map-search__field">
+                  <span className="sr-only">Buscar zona o lugar</span>
+                  <input
+                    type="search"
+                    value={searchQuery}
+                    placeholder="🔍 Buscar zona, barrio o lugar..."
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && searchSuggestions[0]) {
+                        event.preventDefault()
+                        handleLocationSelection(searchSuggestions[0])
+                      }
+                    }}
+                  />
+                </label>
+                {searchFeedback.message ? (
+                  <p
+                    className={`map-search__feedback map-search__feedback--${
+                      searchFeedback.tone || 'info'
+                    }`}
+                  >
+                    {searchFeedback.message}
+                  </p>
+                ) : null}
+                {searchSuggestions.length > 0 ? (
+                  <div className="suggestion-dropdown map-search__dropdown">
+                    {searchSuggestions.map((suggestion) => (
+                      <button
+                        key={suggestion.id}
+                        className="suggestion-card"
+                        type="button"
+                        onClick={() => handleLocationSelection(suggestion)}
+                      >
+                        <strong>{suggestion.name}</strong>
+                        <span>{suggestion.address || 'Ubicación seleccionable'}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="map-search__meta">
+                <span className="map-counter-chip">
+                  {visibleRestaurants.length} restaurantes en esta zona
+                </span>
+                <button
+                  className="map-floating-button map-floating-button--location-inline"
+                  type="button"
+                  onClick={() => {
+                    hasUserInteractedRef.current = true
+                    requestViewport(userPosition, 15, 'fly', 'gps-button')
+                  }}
+                >
+                  📍 Mi ubicación
+                </button>
+              </div>
             </div>
 
-            <button
-              className="map-floating-button map-floating-button--location"
-              type="button"
-              onClick={() => {
-                hasUserInteractedRef.current = true
-                requestViewport(userPosition, 15, 'fly', 'gps-button')
-              }}
-            >
-              📍 Mi ubicación
-            </button>
+            <div className="map-screen__overlay map-screen__overlay--filters">
+              <div
+                className="map-pin-style-selector map-pin-style-selector--floating"
+                role="tablist"
+                aria-label="Estilo de pins"
+              >
+                {PIN_STYLE_OPTIONS.map((option) => (
+                  <button
+                    key={option.id}
+                    className={`map-pin-style-chip${
+                      defaultPinStyle === option.id ? ' map-pin-style-chip--active' : ''
+                    }`}
+                    type="button"
+                    role="tab"
+                    aria-selected={defaultPinStyle === option.id}
+                    onClick={() => setDefaultPinStyle(option.id)}
+                  >
+                    <span
+                      className={`map-pin-style-chip__preview map-pin-style-chip__preview--${option.previewKind} ${
+                        option.id === 'Puntuación'
+                          ? 'map-pin-style-chip__preview--good'
+                          : 'map-pin-style-chip__preview--neutral'
+                      }`}
+                      aria-hidden="true"
+                    >
+                      {option.previewText}
+                    </span>
+                    <span>{option.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
 
             {!hasSeenOnboarding ? (
               <div className="map-onboarding-tip" role="status">
@@ -659,13 +684,13 @@ export function MapScreen({ onCreateRestaurantAtLocation, onOpenEntity }) {
                   isListExpanded ? ' map-detail-sheet--above-expanded-list' : ''
                 }`}
               >
-                <button
-                  className="map-sheet-handle"
-                  type="button"
-                  aria-label="Deslizar para cerrar ficha"
-                  onPointerDown={handleDetailSheetPointerDown}
-                  onPointerUp={handleDetailSheetPointerUp}
-                >
+              <button
+                className="map-sheet-handle"
+                type="button"
+                aria-label="Deslizar para cerrar ficha"
+                onPointerDown={handleDetailSheetPointerDown}
+                onPointerUp={handleDetailSheetPointerUp}
+              >
                   <span />
                 </button>
                 <div className="map-detail-sheet__content">
@@ -681,6 +706,7 @@ export function MapScreen({ onCreateRestaurantAtLocation, onOpenEntity }) {
                       {formatScore(selectedRestaurant.restaurant_score)}
                     </span>
                     <span>{selectedRestaurant.total_entries} platos</span>
+                    <span>{selectedRestaurant.categoryIcon}</span>
                   </div>
                   <p>{selectedRestaurant.distanceFromUserLabel}</p>
                   <p>Mejor plato: {selectedRestaurant.bestDishName}</p>

@@ -273,6 +273,8 @@ export function MapView({
     pointerId: null,
     timerId: 0,
   })
+  const resizeFrameRef = useRef(0)
+  const lastContainerSizeRef = useRef({ width: 0, height: 0 })
 
   const validMarkers = useMemo(
     () => markers.filter((marker) => hasValidCoordinates(marker)),
@@ -367,6 +369,21 @@ export function MapView({
       onViewportChangeRef.current?.(getViewportSnapshot(map))
     }
 
+    const scheduleInvalidateSize = ({ emitViewport = false } = {}) => {
+      if (resizeFrameRef.current) {
+        window.cancelAnimationFrame(resizeFrameRef.current)
+      }
+
+      resizeFrameRef.current = window.requestAnimationFrame(() => {
+        resizeFrameRef.current = 0
+        map.invalidateSize(false)
+
+        if (emitViewport) {
+          emitViewportChange()
+        }
+      })
+    }
+
     const clearLongPress = () => {
       if (pressStateRef.current.timerId) {
         window.clearTimeout(pressStateRef.current.timerId)
@@ -448,13 +465,42 @@ export function MapView({
       emitViewportChange()
     })
 
-    window.setTimeout(() => {
-      map.invalidateSize()
-      emitViewportChange()
-    }, 0)
+    let resizeObserver = null
+
+    if (typeof ResizeObserver === 'function') {
+      resizeObserver = new ResizeObserver((entries) => {
+        const entry = entries[0]
+        const nextWidth = Math.round(entry?.contentRect?.width ?? 0)
+        const nextHeight = Math.round(entry?.contentRect?.height ?? 0)
+
+        if (nextWidth <= 0 || nextHeight <= 0) {
+          return
+        }
+
+        const { width, height } = lastContainerSizeRef.current
+
+        if (width === nextWidth && height === nextHeight) {
+          return
+        }
+
+        lastContainerSizeRef.current = {
+          width: nextWidth,
+          height: nextHeight,
+        }
+        scheduleInvalidateSize({ emitViewport: true })
+      })
+      resizeObserver.observe(container)
+    } else {
+      scheduleInvalidateSize({ emitViewport: true })
+    }
 
     return () => {
       clearLongPress()
+      resizeObserver?.disconnect()
+      if (resizeFrameRef.current) {
+        window.cancelAnimationFrame(resizeFrameRef.current)
+        resizeFrameRef.current = 0
+      }
       container.removeEventListener('pointerdown', handlePointerDown)
       container.removeEventListener('pointermove', handlePointerMove)
       container.removeEventListener('pointerup', handlePointerUp)
@@ -503,18 +549,6 @@ export function MapView({
       animate: false,
     })
   }, [controlledCenter, controlledZoom, viewportAnimation, viewportKey])
-
-  useEffect(() => {
-    const map = mapRef.current
-
-    if (!map) {
-      return
-    }
-
-    window.setTimeout(() => {
-      map.invalidateSize()
-    }, 0)
-  }, [])
 
   useEffect(() => {
     const map = mapRef.current

@@ -186,10 +186,10 @@ export function buildCategoryRankings({
 }
 
 export function buildRestaurantRankings({
-  categories = [],
+  categories,
   currentGroupId,
   currentUserId,
-  dishTypes = [],
+  dishTypes,
   entries,
   restaurants,
   contextId,

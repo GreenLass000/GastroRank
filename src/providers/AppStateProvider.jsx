@@ -266,8 +266,10 @@ function buildRankingContextsForEntries({
         contextId,
       }),
       restaurant: buildRestaurantRankings({
+        categories,
         currentGroupId,
         currentUserId,
+        dishTypes,
         entries,
         restaurants,
         contextId,
