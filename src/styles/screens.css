@@ -153,11 +153,6 @@
   gap: 20px;
 }
 
-.community-screen__hero,
-.profile-screen__hero {
-  padding: 22px 20px;
-}
-
 .community-screen__subtabs {
   display: inline-grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

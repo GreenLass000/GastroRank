@@ -361,7 +361,11 @@ function App() {
         </header>
       ) : null}
 
-      <main className="screen-container">
+      <main
+        className={`screen-container${
+          isHomeScreen && !shareToken ? ' screen-container--with-floating-search' : ''
+        }`}
+      >
         {loadError && !shouldShowAuthScreen ? (
           <StatusBanner
             tone="error"

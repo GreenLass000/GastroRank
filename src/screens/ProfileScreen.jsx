@@ -337,7 +337,7 @@ function ListDetailSection({
 }
 
 export function ProfileScreen({ onNavigate, onOpenEntity }) {
-  const { resolvedTheme, setThemeMode, themeMode } = useTheme()
+  const { setThemeMode, themeMode } = useTheme()
   const {
     achievements,
     categories,
@@ -803,24 +803,6 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
 
   return (
     <section className="screen profile-screen" aria-label="Pantalla de perfil">
-      <article className="screen__hero screen__hero--editorial profile-screen__hero">
-        <div className="profile-hero">
-          <div>
-            <p className="eyebrow">Tu identidad</p>
-            <h2>{currentUserName}</h2>
-            <p>
-              Controla logros, actividad y apariencia desde una cabecera más limpia y
-              orientada a uso diario.
-            </p>
-          </div>
-          <div className="detail-grid detail-grid--compact">
-            <span className="status-pill">Nivel {userLevel}</span>
-            <span className="status-pill">Racha {weeklyStreak} semanas</span>
-            <span className="status-pill">Tema {resolvedTheme === 'dark' ? 'oscuro' : 'claro'}</span>
-          </div>
-        </div>
-      </article>
-
       <article className="surface-card profile-theme-card">
         <div>
           <strong>Apariencia</strong>

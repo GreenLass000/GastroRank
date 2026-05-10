@@ -19,22 +19,23 @@
 }
 
 .topbar {
-  position: sticky;
-  top: 0;
-  z-index: 700;
+  position: fixed;
+  top: 12px;
+  left: 16px;
+  right: 16px;
+  z-index: 900;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 16px;
-  width: min(100%, var(--shell-max-width));
-  margin: 0 auto;
-  min-height: 74px;
-  padding: 14px 18px 8px;
-  background: linear-gradient(180deg, rgba(248, 249, 250, 0.82), rgba(248, 249, 250, 0));
-  backdrop-filter: blur(16px);
+  width: auto;
+  margin: 0;
+  padding: 0;
+  pointer-events: none;
 }
 
 .topbar--home {
+  justify-content: space-between;
   gap: 12px;
 }
 
@@ -43,6 +44,7 @@
   align-items: center;
   gap: 10px;
   flex-shrink: 0;
+  pointer-events: auto;
 }
 
 .topbar__spacer {
@@ -66,6 +68,7 @@
   color: var(--color-text);
   box-shadow: 0 16px 36px var(--color-shadow);
   text-align: left;
+  pointer-events: auto;
 }
 
 .shell-search-bar__label {
@@ -95,6 +98,10 @@
   margin: 0 auto;
   padding: 6px 16px 148px;
   overflow-x: clip;
+}
+
+.screen-container--with-floating-search {
+  padding-top: 84px;
 }
 
 .bottom-nav {
@@ -162,7 +169,8 @@
 
 @media (min-width: 900px) {
   .topbar {
-    padding-inline: 24px;
+    left: 24px;
+    right: 24px;
   }
 
   .screen-container {

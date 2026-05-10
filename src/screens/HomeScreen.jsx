@@ -23,7 +23,6 @@ export function HomeScreen({
 }) {
   const {
     categories,
-    currentUser,
     defaultPinStyle,
     homeDishTypeSection,
     homeNearbySection,
@@ -118,33 +117,6 @@ export function HomeScreen({
 
   return (
     <section className="screen" aria-label="Pantalla de inicio">
-      <article className="screen__hero screen__hero--editorial">
-        <div className="hero-grid">
-          <div>
-            <p className="eyebrow">Resumen semanal</p>
-            <h2>{currentUser?.nombre ? `${currentUser.nombre}, tu semana pinta bien.` : 'Tu semana gastronómica.'}</h2>
-            <p>
-              Combina top local, actividad reciente y el mapa cercano sin salir de
-              inicio.
-            </p>
-          </div>
-          <div className="hero-grid__stats">
-            <div className="hero-grid__stat">
-              <span>Top semanal</span>
-              <strong>{visibleRankingEntries[0]?.dishTypeName || 'Sin líder aún'}</strong>
-            </div>
-            <div className="hero-grid__stat">
-              <span>Cerca de ti</span>
-              <strong>{visibleNearbyRestaurants.length} sitios</strong>
-            </div>
-            <div className="hero-grid__stat">
-              <span>Actividad</span>
-              <strong>{latestEntries.length} platos recientes</strong>
-            </div>
-          </div>
-        </div>
-      </article>
-
       <div className="home-section-grid">
         <div>
           <SectionHeader

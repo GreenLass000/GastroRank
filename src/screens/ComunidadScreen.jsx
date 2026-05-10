@@ -357,24 +357,6 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
 
   return (
     <section className="screen screen--explore" aria-label="Pantalla de explorar">
-      <article className="screen__hero screen__hero--editorial community-screen__hero">
-        <div className="explore-hero">
-          <div>
-            <p className="eyebrow">Descubrimiento social</p>
-            <h2>Explorar platos, gente y señales del momento.</h2>
-            <p>
-              Alterna entre público y amigos sin salir del feed y abre detalle con
-              comentarios, reacciones y guardado rápido.
-            </p>
-          </div>
-          <div className="detail-grid detail-grid--compact">
-            <span className="status-pill">{feedState.totalItems} resultados</span>
-            <span className="status-pill">{recommendationItems.length} recomendaciones</span>
-            <span className="status-pill">{tab === 'explorar' ? 'Feed público' : 'Feed de amigos'}</span>
-          </div>
-        </div>
-      </article>
-
       <div className="community-screen__subtabs">
         <button
           className={`community-screen__subtab${tab === 'explorar' ? ' community-screen__subtab--active' : ''}`}
