@@ -319,17 +319,9 @@ function App() {
             aria-label="Buscar restaurantes, platos o perfiles"
             onClick={() => setIsSearchOpen(true)}
           >
-            <span className="shell-search-bar__ornament" aria-hidden="true">
-              <span className="shell-search-bar__spark shell-search-bar__spark--orange" />
-              <span className="shell-search-bar__spark shell-search-bar__spark--purple" />
+            <span className="shell-search-bar__placeholder">
+              Restaurantes, platos, usuarios...
             </span>
-            <span className="shell-search-bar__content">
-              <span className="shell-search-bar__eyebrow">Explorar rápido</span>
-              <span className="shell-search-bar__label">
-                Buscar restaurantes, platos o perfiles
-              </span>
-            </span>
-            <span className="shell-search-bar__badge">Abrir</span>
           </button>
         </header>
       ) : null}

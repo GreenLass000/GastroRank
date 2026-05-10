@@ -392,6 +392,27 @@ export function MapView({
     }
 
     const container = map.getContainer()
+    const isTouchDevice =
+      typeof window !== 'undefined' &&
+      (window.matchMedia?.('(pointer: coarse)').matches || navigator.maxTouchPoints > 0)
+
+    const disableSingleFingerMapDrag = () => {
+      if (mode !== 'full' || !isTouchDevice) {
+        return
+      }
+
+      map.dragging?.disable()
+      map.touchZoom?.disable()
+    }
+
+    const enableTwoFingerMapDrag = () => {
+      if (mode !== 'full' || !isTouchDevice) {
+        return
+      }
+
+      map.dragging?.enable()
+      map.touchZoom?.enable()
+    }
 
     const shouldIgnoreTarget = (target) =>
       Boolean(
@@ -451,11 +472,34 @@ export function MapView({
       cancelLongPress()
     }
 
+    const handleTouchStart = (event) => {
+      if (event.touches.length >= 2) {
+        enableTwoFingerMapDrag()
+        return
+      }
+
+      disableSingleFingerMapDrag()
+    }
+
+    const handleTouchEnd = (event) => {
+      if (event.touches.length >= 2) {
+        enableTwoFingerMapDrag()
+        return
+      }
+
+      disableSingleFingerMapDrag()
+    }
+
+    disableSingleFingerMapDrag()
+
     container.addEventListener('pointerdown', handlePointerDown)
     container.addEventListener('pointermove', handlePointerMove)
     container.addEventListener('pointerup', handlePointerUp)
     container.addEventListener('pointercancel', handlePointerUp)
     container.addEventListener('pointerleave', handlePointerUp)
+    container.addEventListener('touchstart', handleTouchStart, { passive: true })
+    container.addEventListener('touchend', handleTouchEnd, { passive: true })
+    container.addEventListener('touchcancel', handleTouchEnd, { passive: true })
     map.on('dragstart', cancelLongPress)
     map.on('movestart', cancelLongPress)
     map.on('zoomstart', cancelLongPress)
@@ -506,6 +550,9 @@ export function MapView({
       container.removeEventListener('pointerup', handlePointerUp)
       container.removeEventListener('pointercancel', handlePointerUp)
       container.removeEventListener('pointerleave', handlePointerUp)
+      container.removeEventListener('touchstart', handleTouchStart)
+      container.removeEventListener('touchend', handleTouchEnd)
+      container.removeEventListener('touchcancel', handleTouchEnd)
       map.off()
       map.remove()
       mapRef.current = null
