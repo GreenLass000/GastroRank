@@ -15,15 +15,23 @@ export function calculateGeneralScore(entry) {
 }
 
 export function calculateAverageScore(entries) {
-  if (entries.length === 0) {
+  const validEntries = entries.filter((entry) =>
+    Number.isFinite(entry?.puntuacion_general),
+  )
+
+  if (validEntries.length === 0) {
     return null
   }
 
-  const total = entries.reduce((sum, entry) => sum + entry.puntuacion_general, 0)
-  return Number((total / entries.length).toFixed(1))
+  const total = validEntries.reduce((sum, entry) => sum + entry.puntuacion_general, 0)
+  return Number((total / validEntries.length).toFixed(1))
 }
 
 export function getScoreTone(score) {
+  if (!Number.isFinite(score)) {
+    return 'neutral'
+  }
+
   if (score >= 8) {
     return 'good'
   }

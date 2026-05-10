@@ -6,7 +6,7 @@ This repository is a Vite + React application with PostgreSQL + Drizzle ORM as t
 ## Where To Look First
 - `TODO.md`: full product brief and final acceptance criteria
 - `AGENTS.md`: contributor rules, repository expectations, and document map
-- `docs/CHECKPOINT.md`: current project memory, implemented scope, startup flow, and next recommended step
+- `docs/CHECKPOINT.md`: current project memory and current closure state
 - `docs/ARQUITECTURA_SQLITE.md`: SQLite layout, commands, schema notes, and persistence rules
 - `docs/CHECKLIST_TECNICO.md`: file-by-file and component-by-component implementation checklist
 - `server/app.js`: local API over SQLite for frontend hydration and first write flows
@@ -15,40 +15,30 @@ When resuming the project after a gap or in a new chat, read `docs/CHECKPOINT.md
 If `docs/CHECKPOINT.md` already says implementation is closed in code, do not restart a broad audit; limit the session to verification or targeted fixes.
 
 ## Current Continuity Snapshot
-Current rediseño status for `Inicio`:
-- `Milestone 1`: closed in code
-- `Milestone 2`: closed in code
-- `Milestone 3`: closed in code
-- `Milestone 4`: closed in code
-- `Milestone 5`: closed in code
+Current status:
+- the planned implementation cycle is finished in code
+- auth, social backend, uploads, rankings/map, and community/profile redesign are closed for the current scope
+- the repository is now in maintenance state pending new product changes or a new plan
 
 Current next-step assumption:
 - start from `docs/CHECKPOINT.md`
-- if the environment has Node, run verification (`lint`, `build`) and validate auth flows against PostgreSQL
-- otherwise limit the session to targeted fixes or visual corrections only
-- do not reopen broad home milestones unless the task is a targeted fix or visual correction
-- `docs/PLAN_COMPLETION.md`:
-  - `Fase 1`: cerrada en código
-  - siguiente bloque natural: `Fase 2`
-- Comunidad + Perfil:
-  - `Fase 5`: closed in code
-  - `Fase 6`: closed in code
-  - `Fase 7`: closed in code
-  - `Fase 8`: closed in code
-  - `Fase 9`: parcial en código
-  - siguiente bloque natural: verificación con Node + remate de pendientes de `Fase 9` no cubiertos
+- do not reopen old phase-by-phase plans
+- only do one of these until a new plan exists:
+  - targeted bug fixes
+  - visual corrections
+  - small verification tasks
+  - new work explicitly requested by the user
 
 Current files that matter most for the next block:
 - `docs/CHECKPOINT.md`
-- `docs/PLAN_COMPLETION.md`
-- `server/app.js`
-- `server/db/schema.js`
+- `TODO.md`
+- `src/App.jsx`
 - `src/providers/AppStateProvider.jsx`
-- `src/screens/AuthScreen.jsx`
+- `src/screens/HomeScreen.jsx`
+- `src/screens/RankingsScreen.jsx`
+- `src/screens/MapScreen.jsx`
 - `src/screens/ComunidadScreen.jsx`
-- `src/lib/achievements.js`
 - `src/screens/ProfileScreen.jsx`
-- `src/lib/api.js`
 
 ## Current Map Stack
 The project currently uses **Leaflet + OpenStreetMap** as the real map implementation for both the main map and the restaurant mini map. Do not assume Google Maps is the active provider unless a future task explicitly reintroduces it. Current map behavior that contributors should preserve:

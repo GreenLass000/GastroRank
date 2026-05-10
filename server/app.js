@@ -5,8 +5,11 @@ import {
   scryptSync,
   timingSafeEqual,
 } from 'node:crypto'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import http from 'node:http'
-import { and, asc, desc, eq } from 'drizzle-orm'
+import path from 'node:path'
+import { and, asc, desc, eq, gte, inArray, lte, ne, or, sql } from 'drizzle-orm'
+import { fileURLToPath } from 'node:url'
 import { ACHIEVEMENT_TYPES } from '../src/lib/achievements.js'
 import {
   validateCategoryPayload,
@@ -27,6 +30,25 @@ const RATE_LIMIT_MAX_REQUESTS = 120
 const AUTH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30
 const JWT_SECRET = process.env.JWT_SECRET?.trim() || 'gastrorank-dev-secret-change-me'
 const requestBuckets = new Map()
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+const UPLOADS_DIR = path.join(__dirname, 'uploads')
+const ALLOWED_UPLOAD_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+])
+const MIME_EXTENSION_MAP = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/heic': 'heic',
+  'image/heif': 'heif',
+}
+
+await mkdir(UPLOADS_DIR, { recursive: true })
 
 // ---------------------------------------------------------------------------
 // DB fetch helpers (replaces ROUTE_QUERIES + runJsonQuery)
@@ -86,6 +108,17 @@ function sendJson(response, statusCode, payload) {
     'Content-Type': 'application/json; charset=utf-8',
   })
   response.end(JSON.stringify(payload))
+}
+
+function sendBinary(response, statusCode, body, contentType) {
+  response.writeHead(statusCode, {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Content-Type': contentType,
+    'Cache-Control': 'public, max-age=31536000, immutable',
+  })
+  response.end(body)
 }
 
 function toBase64Url(value) {
@@ -192,6 +225,79 @@ function getClientIp(request) {
   }
 
   return request.socket.remoteAddress || 'unknown'
+}
+
+function getBaseUrl(request) {
+  const forwardedProto = String(request.headers['x-forwarded-proto'] ?? '').trim()
+  const protocol = forwardedProto || 'http'
+  return `${protocol}://${request.headers.host}`
+}
+
+function normalizeUploadKind(value) {
+  const kind = String(value ?? '').trim().toLowerCase()
+  return ['avatar', 'dish', 'restaurant'].includes(kind) ? kind : 'image'
+}
+
+function getUploadExtension(file) {
+  const mimeType = String(file.type ?? '').toLowerCase()
+
+  if (mimeType && MIME_EXTENSION_MAP[mimeType]) {
+    return MIME_EXTENSION_MAP[mimeType]
+  }
+
+  const fileName = String(file.name ?? '')
+  const extension = fileName.includes('.') ? fileName.split('.').pop().toLowerCase() : ''
+  return extension || 'jpg'
+}
+
+async function readMultipartFormData(request) {
+  const bodyStream = ReadableStream.from(request)
+  const multipartRequest = new Request(getBaseUrl(request) + request.url, {
+    method: request.method,
+    headers: request.headers,
+    body: bodyStream,
+    duplex: 'half',
+  })
+
+  return multipartRequest.formData()
+}
+
+async function storeUpload(request, authenticatedUserId) {
+  getAuthenticatedUserId(authenticatedUserId)
+
+  const formData = await readMultipartFormData(request)
+  const file = formData.get('file')
+
+  if (!(file instanceof File)) {
+    throw new Error('No se recibió ningún archivo.')
+  }
+
+  if (!ALLOWED_UPLOAD_MIME_TYPES.has(String(file.type ?? '').toLowerCase())) {
+    throw new Error('Formato no permitido. Usa jpg, jpeg, png, webp o heic.')
+  }
+
+  if (file.size <= 0) {
+    throw new Error('El archivo recibido está vacío.')
+  }
+
+  if (file.size > 25 * 1024 * 1024) {
+    throw new Error('La imagen supera el límite de 25MB.')
+  }
+
+  const extension = getUploadExtension(file)
+  const kind = normalizeUploadKind(formData.get('kind'))
+  const fileName = `${kind}-${randomUUID()}.${extension}`
+  const filePath = path.join(UPLOADS_DIR, fileName)
+  const bytes = Buffer.from(await file.arrayBuffer())
+
+  await writeFile(filePath, bytes)
+
+  return {
+    path: `/uploads/${fileName}`,
+    url: `${getBaseUrl(request)}/uploads/${fileName}`,
+    contentType: file.type || 'application/octet-stream',
+    size: file.size,
+  }
 }
 
 function pruneRateLimitBuckets(now) {
@@ -421,7 +527,15 @@ function getCurrentUserIdFromSearchParams(searchParams, authenticatedUserId = ''
     return authenticatedUserId
   }
 
-  return getRequiredString(userId, 'el user_id actual')
+  const resolvedUserId = getRequiredString(userId, 'el user_id actual')
+
+  if (authenticatedUserId && resolvedUserId !== authenticatedUserId) {
+    const error = new Error('No puedes solicitar datos privados de otro usuario.')
+    error.statusCode = 403
+    throw error
+  }
+
+  return resolvedUserId
 }
 
 function normalizeReactionType(value) {
@@ -650,6 +764,62 @@ function buildSharedGroupIds(groupMembers, currentUserId, otherUserId) {
       )
       .map((m) => m.group_id),
   )
+}
+
+async function ensureUserCanAccessDishEntry(entryId, userId, message = '') {
+  const [entry] = await db
+    .select()
+    .from(schema.dishEntries)
+    .where(eq(schema.dishEntries.id, entryId))
+    .limit(1)
+
+  if (!entry) {
+    throw new Error('No existe la valoración solicitada.')
+  }
+
+  if (entry.created_by_user_id === userId || entry.visibility === 'public') {
+    return entry
+  }
+
+  if (entry.visibility === 'group' && entry.group_id) {
+    const [membership] = await db
+      .select({ id: schema.groupMembers.id })
+      .from(schema.groupMembers)
+      .where(
+        and(
+          eq(schema.groupMembers.group_id, entry.group_id),
+          eq(schema.groupMembers.user_id, userId),
+          eq(schema.groupMembers.status, 'active'),
+        ),
+      )
+      .limit(1)
+
+    if (membership) {
+      return entry
+    }
+  }
+
+  const error = new Error(
+    message || 'No puedes acceder a una valoración que no está visible para tu cuenta.',
+  )
+  error.statusCode = 403
+  throw error
+}
+
+function buildSharedGroupIdsByUser(groupMembers, currentUserId, candidateUserIds) {
+  return candidateUserIds.reduce((acc, candidateUserId) => {
+    const sharedGroupIds = buildSharedGroupIds(
+      groupMembers,
+      currentUserId,
+      candidateUserId,
+    )
+
+    if (sharedGroupIds.size > 0) {
+      acc.set(candidateUserId, sharedGroupIds)
+    }
+
+    return acc
+  }, new Map())
 }
 
 function generateInviteCode() {
@@ -1132,107 +1302,220 @@ async function getCommunityFeed(searchParams, authenticatedUserId) {
   const pageSize = Math.min(30, Math.max(1, parseInteger(searchParams.get('page_size'), 10)))
   const filters = parseFilters(searchParams)
 
-  const [
-    users,
-    restaurants,
-    categories,
-    dishTypes,
-    dishEntries,
-    follows,
-    groupMembers,
-    reactions,
-    comments,
-  ] = await Promise.all([
-    FETCH.users(),
-    FETCH.restaurants(),
-    FETCH.categories(),
-    FETCH.dishTypes(),
-    FETCH.dishEntries(),
-    FETCH.follows(),
-    FETCH.groupMembers(),
-    FETCH.reactions(),
-    FETCH.comments(),
-  ])
+  const [currentUser] = await db
+    .select()
+    .from(schema.users)
+    .where(eq(schema.users.id, currentUserId))
+    .limit(1)
 
-  ensureRecordExists(users, currentUserId, 'el usuario actual')
-  const mutualFollowIds = buildMutualFollowIds(follows, currentUserId)
+  if (!currentUser) {
+    throw new Error('No existe el usuario actual.')
+  }
+
+  const conditions = [ne(schema.dishEntries.created_by_user_id, currentUserId)]
+
+  if (tab === 'amigos') {
+    const follows = await db
+      .select()
+      .from(schema.follows)
+      .where(
+        or(
+          eq(schema.follows.follower_user_id, currentUserId),
+          eq(schema.follows.followed_user_id, currentUserId),
+        ),
+      )
+
+    const mutualFollowIds = [...buildMutualFollowIds(follows, currentUserId)]
+
+    if (mutualFollowIds.length === 0) {
+      return {
+        tab,
+        page: 1,
+        pageSize,
+        page_size: pageSize,
+        total: 0,
+        total_items: 0,
+        totalPages: 1,
+        total_pages: 1,
+        filters,
+        items: [],
+        entries: [],
+      }
+    }
+
+    const groupMembers = await db
+      .select()
+      .from(schema.groupMembers)
+      .where(
+        and(
+          eq(schema.groupMembers.status, 'active'),
+          or(
+            eq(schema.groupMembers.user_id, currentUserId),
+            inArray(schema.groupMembers.user_id, mutualFollowIds),
+          ),
+        ),
+      )
+
+    const sharedGroupIdsByUser = buildSharedGroupIdsByUser(
+      groupMembers,
+      currentUserId,
+      mutualFollowIds,
+    )
+    const groupVisibilityConditions = mutualFollowIds
+      .map((followedUserId) => {
+        const sharedGroupIds = [...(sharedGroupIdsByUser.get(followedUserId) ?? [])]
+
+        if (sharedGroupIds.length === 0) {
+          return null
+        }
+
+        return and(
+          eq(schema.dishEntries.created_by_user_id, followedUserId),
+          eq(schema.dishEntries.visibility, 'group'),
+          inArray(schema.dishEntries.group_id, sharedGroupIds),
+        )
+      })
+      .filter(Boolean)
+
+    const visibilityConditions = [
+      and(
+        inArray(schema.dishEntries.created_by_user_id, mutualFollowIds),
+        eq(schema.dishEntries.visibility, 'public'),
+      ),
+      ...groupVisibilityConditions,
+    ]
+
+    conditions.push(or(...visibilityConditions))
+  } else {
+    conditions.push(eq(schema.dishEntries.visibility, 'public'))
+  }
+
+  if (filters.categoryIds.length > 0) {
+    conditions.push(inArray(schema.dishEntries.categoria_id, filters.categoryIds))
+  }
+
+  if (filters.dishTypeIds.length > 0) {
+    conditions.push(inArray(schema.dishEntries.tipo_plato_id, filters.dishTypeIds))
+  }
+
+  if (filters.priceRange.length > 0) {
+    const matchingRestaurants = await db
+      .select({ id: schema.restaurants.id })
+      .from(schema.restaurants)
+      .where(inArray(schema.restaurants.precio_rango, filters.priceRange))
+    const restaurantIds = matchingRestaurants.map((restaurant) => restaurant.id)
+
+    if (restaurantIds.length === 0) {
+      return {
+        tab,
+        page: 1,
+        pageSize,
+        page_size: pageSize,
+        total: 0,
+        total_items: 0,
+        totalPages: 1,
+        total_pages: 1,
+        filters,
+        items: [],
+        entries: [],
+      }
+    }
+
+    conditions.push(inArray(schema.dishEntries.restaurant_id, restaurantIds))
+  }
+
+  if (typeof filters.minScore === 'number' && !Number.isNaN(filters.minScore)) {
+    conditions.push(gte(schema.dishEntries.puntuacion_general, filters.minScore))
+  }
+
+  if (filters.dateFrom) {
+    conditions.push(gte(schema.dishEntries.fecha, filters.dateFrom))
+  }
+
+  if (filters.dateTo) {
+    conditions.push(lte(schema.dishEntries.fecha, filters.dateTo))
+  }
+
+  const whereClause = and(...conditions)
+  const totalCountRows = await db
+    .select({ count: sql`count(*)` })
+    .from(schema.dishEntries)
+    .where(whereClause)
+  const totalItems = Number(totalCountRows[0]?.count ?? 0)
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
+  const currentPage = Math.min(page, totalPages)
+  const offset = (currentPage - 1) * pageSize
+  const paginatedEntries =
+    totalItems > 0
+      ? await db
+          .select()
+          .from(schema.dishEntries)
+          .where(whereClause)
+          .orderBy(desc(schema.dishEntries.created_at), desc(schema.dishEntries.fecha))
+          .limit(pageSize)
+          .offset(offset)
+      : []
+
+  if (paginatedEntries.length === 0) {
+    return {
+      tab,
+      page: currentPage,
+      pageSize,
+      page_size: pageSize,
+      total: totalItems,
+      total_items: totalItems,
+      totalPages,
+      total_pages: totalPages,
+      filters,
+      items: [],
+      entries: [],
+    }
+  }
+
+  const entryIds = paginatedEntries.map((entry) => entry.id)
+  const authorIds = [...new Set(paginatedEntries.map((entry) => entry.created_by_user_id))]
+  const restaurantIds = [...new Set(paginatedEntries.map((entry) => entry.restaurant_id))]
+  const categoryIds = [...new Set(paginatedEntries.map((entry) => entry.categoria_id))]
+  const dishTypeIds = [...new Set(paginatedEntries.map((entry) => entry.tipo_plato_id))]
+  const [users, restaurants, categories, dishTypes, reactions, comments] =
+    await Promise.all([
+      db.select().from(schema.users).where(inArray(schema.users.id, authorIds)),
+      db.select().from(schema.restaurants).where(inArray(schema.restaurants.id, restaurantIds)),
+      db.select().from(schema.categories).where(inArray(schema.categories.id, categoryIds)),
+      db.select().from(schema.dishTypes).where(inArray(schema.dishTypes.id, dishTypeIds)),
+      db
+        .select()
+        .from(schema.reactions)
+        .where(inArray(schema.reactions.dish_entry_id, entryIds))
+        .orderBy(desc(schema.reactions.created_at)),
+      db
+        .select()
+        .from(schema.comments)
+        .where(inArray(schema.comments.dish_entry_id, entryIds))
+        .orderBy(asc(schema.comments.created_at)),
+    ])
+
   const restaurantsById = new Map(
-    parseRestaurantRows(restaurants).map((r) => [r.id, r]),
+    parseRestaurantRows(restaurants).map((restaurant) => [restaurant.id, restaurant]),
   )
-  const categoriesById = new Map(categories.map((c) => [c.id, c]))
-  const dishTypesById = new Map(dishTypes.map((d) => [d.id, d]))
+  const categoriesById = new Map(categories.map((category) => [category.id, category]))
+  const dishTypesById = new Map(dishTypes.map((dishType) => [dishType.id, dishType]))
   const usersById = buildUserLookup(users)
   const reactionsByEntryId = new Map()
   const commentsByEntryId = new Map()
 
-  reactions.forEach((r) => {
-    const list = reactionsByEntryId.get(r.dish_entry_id) ?? []
-    list.push(r)
-    reactionsByEntryId.set(r.dish_entry_id, list)
+  reactions.forEach((reaction) => {
+    const list = reactionsByEntryId.get(reaction.dish_entry_id) ?? []
+    list.push(reaction)
+    reactionsByEntryId.set(reaction.dish_entry_id, list)
   })
 
-  comments.forEach((c) => {
-    const list = commentsByEntryId.get(c.dish_entry_id) ?? []
-    list.push({ ...c, mentions: parseJsonValue(c.mentions, []) })
-    commentsByEntryId.set(c.dish_entry_id, list)
+  comments.forEach((comment) => {
+    const list = commentsByEntryId.get(comment.dish_entry_id) ?? []
+    list.push({ ...comment, mentions: parseJsonValue(comment.mentions, []) })
+    commentsByEntryId.set(comment.dish_entry_id, list)
   })
 
-  let scoped = dishEntries.filter((e) => e.created_by_user_id !== currentUserId)
-
-  if (tab === 'amigos') {
-    scoped = scoped.filter((e) => {
-      if (!mutualFollowIds.has(e.created_by_user_id)) return false
-      if (e.visibility === 'public') return true
-
-      if (e.visibility !== 'group' || !e.group_id) return false
-
-      return buildSharedGroupIds(groupMembers, currentUserId, e.created_by_user_id).has(
-        e.group_id,
-      )
-    })
-  } else {
-    scoped = scoped.filter((e) => e.visibility === 'public')
-  }
-
-  if (filters.categoryIds.length > 0) {
-    scoped = scoped.filter((e) => filters.categoryIds.includes(e.categoria_id))
-  }
-
-  if (filters.dishTypeIds.length > 0) {
-    scoped = scoped.filter((e) => filters.dishTypeIds.includes(e.tipo_plato_id))
-  }
-
-  if (filters.priceRange.length > 0) {
-    scoped = scoped.filter((e) => {
-      const r = restaurantsById.get(e.restaurant_id)
-      return r && filters.priceRange.includes(r.precio_rango)
-    })
-  }
-
-  if (typeof filters.minScore === 'number' && !Number.isNaN(filters.minScore)) {
-    scoped = scoped.filter(
-      (e) => Number(e.puntuacion_general ?? 0) >= filters.minScore,
-    )
-  }
-
-  if (filters.dateFrom) {
-    scoped = scoped.filter((e) => String(e.fecha) >= filters.dateFrom)
-  }
-
-  if (filters.dateTo) {
-    scoped = scoped.filter((e) => String(e.fecha) <= filters.dateTo)
-  }
-
-  scoped.sort((a, b) => {
-    const at = new Date(a.created_at ?? a.fecha).getTime()
-    const bt = new Date(b.created_at ?? b.fecha).getTime()
-    return bt - at
-  })
-
-  const totalItems = scoped.length
-  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
-  const currentPage = Math.min(page, totalPages)
-  const offset = (currentPage - 1) * pageSize
   const context = {
     currentUserId,
     usersById,
@@ -1246,13 +1529,15 @@ async function getCommunityFeed(searchParams, authenticatedUserId) {
   return {
     tab,
     page: currentPage,
+    pageSize,
     page_size: pageSize,
+    total: totalItems,
     total_items: totalItems,
+    totalPages,
     total_pages: totalPages,
     filters,
-    entries: scoped
-      .slice(offset, offset + pageSize)
-      .map((e) => buildCommunityEntry(e, context)),
+    items: paginatedEntries.map((entry) => buildCommunityEntry(entry, context)),
+    entries: paginatedEntries.map((entry) => buildCommunityEntry(entry, context)),
   }
 }
 
@@ -1261,8 +1546,14 @@ async function addOrUpdateReaction(payload) {
   const userId = getRequiredString(payload.user_id, 'el user_id')
   const reactionType = normalizeReactionType(payload.reaction_type)
 
-  const [dishEntries, users] = await Promise.all([FETCH.dishEntries(), FETCH.users()])
-  ensureRecordExists(dishEntries, dishEntryId, 'la valoración')
+  const [, users] = await Promise.all([
+    ensureUserCanAccessDishEntry(
+      dishEntryId,
+      userId,
+      'No puedes reaccionar a una valoración privada de otro usuario.',
+    ),
+    FETCH.users(),
+  ])
   ensureRecordExists(users, userId, 'el usuario')
 
   const record = {
@@ -1284,21 +1575,31 @@ async function addOrUpdateReaction(payload) {
   return record
 }
 
-async function deleteReaction(reactionId) {
+async function deleteReaction(reactionId, actorUserId) {
   const reactions = await FETCH.reactions()
-  ensureRecordExists(reactions, reactionId, 'la reacción')
+  const reaction = ensureRecordExists(reactions, reactionId, 'la reacción')
+
+  if (reaction.user_id !== actorUserId) {
+    const error = new Error('No puedes borrar la reacción de otro usuario.')
+    error.statusCode = 403
+    throw error
+  }
+
   await db.delete(schema.reactions).where(eq(schema.reactions.id, reactionId))
   return { ok: true }
 }
 
-async function getCommentsForEntry(entryId) {
-  const [comments, users, dishEntries] = await Promise.all([
+async function getCommentsForEntry(entryId, actorUserId) {
+  const [comments, users] = await Promise.all([
     FETCH.comments(),
     FETCH.users(),
-    FETCH.dishEntries(),
+    ensureUserCanAccessDishEntry(
+      entryId,
+      actorUserId,
+      'No puedes leer comentarios de una valoración privada de otro usuario.',
+    ),
   ])
 
-  ensureRecordExists(dishEntries, entryId, 'la valoración')
   const usersById = buildUserLookup(users)
 
   return comments
@@ -1320,8 +1621,14 @@ async function createComment(payload) {
     throw new Error('El comentario no puede superar los 500 caracteres.')
   }
 
-  const [dishEntries, users] = await Promise.all([FETCH.dishEntries(), FETCH.users()])
-  ensureRecordExists(dishEntries, dishEntryId, 'la valoración')
+  const [, users] = await Promise.all([
+    ensureUserCanAccessDishEntry(
+      dishEntryId,
+      userId,
+      'No puedes comentar una valoración privada de otro usuario.',
+    ),
+    FETCH.users(),
+  ])
   ensureRecordExists(users, userId, 'el usuario')
 
   const record = {
@@ -1396,7 +1703,7 @@ async function createInspirationList(payload) {
   return record
 }
 
-async function createInspirationListItem(payload) {
+async function createInspirationListItem(payload, actorUserId) {
   const listId = getRequiredString(payload.list_id, 'el list_id')
   const dishEntryId = getRequiredString(payload.dish_entry_id, 'el dish_entry_id')
   const tried = Boolean(payload.tried)
@@ -1408,8 +1715,20 @@ async function createInspirationListItem(payload) {
     FETCH.inspirationListItems(),
   ])
 
-  ensureRecordExists(lists, listId, 'la lista')
+  const list = ensureRecordExists(lists, listId, 'la lista')
   ensureRecordExists(dishEntries, dishEntryId, 'la valoración')
+
+  if (list.user_id !== actorUserId) {
+    const error = new Error('No puedes guardar elementos en la lista de otro usuario.')
+    error.statusCode = 403
+    throw error
+  }
+
+  await ensureUserCanAccessDishEntry(
+    dishEntryId,
+    actorUserId,
+    'No puedes guardar en listas una valoración privada de otro usuario.',
+  )
 
   const existing = items.find(
     (i) => i.list_id === listId && i.dish_entry_id === dishEntryId,
@@ -1432,9 +1751,17 @@ async function createInspirationListItem(payload) {
   return record
 }
 
-async function updateInspirationListItem(itemId, payload) {
+async function updateInspirationListItem(itemId, payload, actorUserId) {
   const items = await FETCH.inspirationListItems()
   const current = ensureRecordExists(items, itemId, 'el elemento de lista')
+  const lists = await FETCH.inspirationLists()
+  const list = ensureRecordExists(lists, current.list_id, 'la lista del elemento')
+
+  if (list.user_id !== actorUserId) {
+    const error = new Error('No puedes editar elementos de la lista de otro usuario.')
+    error.statusCode = 403
+    throw error
+  }
 
   if (payload.remove) {
     await db
@@ -1474,8 +1801,21 @@ async function createRecommendation(payload) {
   ensureRecordExists(users, toUserId, 'el usuario destino')
   ensureRecordExists(dishEntries, dishEntryId, 'la valoración recomendada')
 
+  await ensureUserCanAccessDishEntry(
+    dishEntryId,
+    fromUserId,
+    'No puedes recomendar una valoración que no está visible para tu cuenta.',
+  )
+  await ensureUserCanAccessDishEntry(
+    dishEntryId,
+    toUserId,
+    'No puedes recomendar una valoración que el destinatario no puede ver.',
+  )
+
   if (!buildMutualFollowIds(follows, fromUserId).has(toUserId)) {
-    throw new Error('Solo puedes enviar recomendaciones a amistades mutuas.')
+    const error = new Error('Solo puedes enviar recomendaciones a amistades mutuas.')
+    error.statusCode = 403
+    throw error
   }
 
   const record = {
@@ -1491,9 +1831,15 @@ async function createRecommendation(payload) {
   return record
 }
 
-async function markRecommendationSeen(recommendationId) {
+async function markRecommendationSeen(recommendationId, actorUserId) {
   const recs = await FETCH.recommendations()
-  ensureRecordExists(recs, recommendationId, 'la recomendación')
+  const recommendation = ensureRecordExists(recs, recommendationId, 'la recomendación')
+
+  if (recommendation.to_user_id !== actorUserId) {
+    const error = new Error('No puedes marcar recomendaciones de otro usuario.')
+    error.statusCode = 403
+    throw error
+  }
 
   const [updated] = await db
     .update(schema.recommendations)
@@ -1585,14 +1931,20 @@ async function getAchievements(userId) {
   }
 }
 
-async function updateAchievement(achievementId, payload) {
+async function updateAchievement(achievementId, payload, actorUserId) {
   const achievements = await FETCH.achievements()
-  ensureRecordExists(achievements, achievementId, 'el logro solicitado')
+  const achievement = ensureRecordExists(achievements, achievementId, 'el logro solicitado')
+
+  if (achievement.user_id !== actorUserId) {
+    const error = new Error('No puedes editar logros de otro usuario.')
+    error.statusCode = 403
+    throw error
+  }
 
   const notified =
     payload.notified !== undefined
       ? Boolean(payload.notified)
-      : achievements.find((a) => a.id === achievementId)?.notified ?? false
+      : achievement.notified ?? false
 
   const [updated] = await db
     .update(schema.achievements)
@@ -1730,6 +2082,28 @@ async function loadPublicSharePayload(token) {
 async function handleRoute(url, response, authUser = null) {
   const { pathname, searchParams } = url
 
+  if (pathname.startsWith('/uploads/')) {
+    const fileName = pathname.replace('/uploads/', '').trim()
+    const safeFileName = path.basename(fileName)
+
+    if (!safeFileName || safeFileName !== fileName) {
+      return sendJson(response, 400, { error: 'Ruta de archivo no válida.' })
+    }
+
+    try {
+      const filePath = path.join(UPLOADS_DIR, safeFileName)
+      const body = await readFile(filePath)
+      const extension = safeFileName.split('.').pop()?.toLowerCase() ?? ''
+      const contentType =
+        Object.entries(MIME_EXTENSION_MAP).find(([, mappedExtension]) => mappedExtension === extension)?.[0] ??
+        'application/octet-stream'
+
+      return sendBinary(response, 200, body, contentType)
+    } catch {
+      return sendJson(response, 404, { error: 'Archivo no encontrado.' })
+    }
+  }
+
   if (pathname === '/api/health') {
     try {
       await db.execute('SELECT 1')
@@ -1752,7 +2126,10 @@ async function handleRoute(url, response, authUser = null) {
   }
 
   if (pathname === '/api/follows') {
-    const userId = getCurrentUserIdFromSearchParams(searchParams)
+    const userId = getCurrentUserIdFromSearchParams(
+      searchParams,
+      getAuthenticatedUserId(authUser),
+    )
     return sendJson(response, 200, await getFollowState(userId))
   }
 
@@ -1767,24 +2144,33 @@ async function handleRoute(url, response, authUser = null) {
   if (pathname.startsWith('/api/comments/')) {
     const entryId = decodeURIComponent(pathname.replace('/api/comments/', ''))
     return sendJson(response, 200, {
-      comments: await getCommentsForEntry(entryId),
+      comments: await getCommentsForEntry(entryId, getAuthenticatedUserId(authUser)),
     })
   }
 
   if (pathname === '/api/inspiration-lists') {
-    const userId = getCurrentUserIdFromSearchParams(searchParams)
+    const userId = getCurrentUserIdFromSearchParams(
+      searchParams,
+      getAuthenticatedUserId(authUser),
+    )
     return sendJson(response, 200, {
       inspirationLists: await getInspirationLists(userId),
     })
   }
 
   if (pathname === '/api/recommendations') {
-    const userId = getCurrentUserIdFromSearchParams(searchParams)
+    const userId = getCurrentUserIdFromSearchParams(
+      searchParams,
+      getAuthenticatedUserId(authUser),
+    )
     return sendJson(response, 200, await getRecommendations(userId))
   }
 
   if (pathname === '/api/achievements') {
-    const userId = getCurrentUserIdFromSearchParams(searchParams)
+    const userId = getCurrentUserIdFromSearchParams(
+      searchParams,
+      getAuthenticatedUserId(authUser),
+    )
     return sendJson(response, 200, await getAchievements(userId))
   }
 
@@ -1811,6 +2197,7 @@ async function handleRoute(url, response, authUser = null) {
 
 function isPublicRoute(pathname) {
   return (
+    pathname.startsWith('/uploads/') ||
     pathname === '/api/health' ||
     pathname === '/api/bootstrap' ||
     pathname === '/api/auth/register' ||
@@ -1852,6 +2239,13 @@ const server = http.createServer(async (request, response) => {
       }
 
       await handleRoute(url, response, authUser)
+      return
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/upload') {
+      sendJson(response, 201, {
+        upload: await storeUpload(request, getAuthenticatedUserId(authUser)),
+      })
       return
     }
 
@@ -1976,7 +2370,10 @@ const server = http.createServer(async (request, response) => {
     if (request.method === 'POST' && url.pathname === '/api/inspiration-list-items') {
       const body = await readJsonBody(request)
       sendJson(response, 201, {
-        inspirationListItem: await createInspirationListItem(body),
+        inspirationListItem: await createInspirationListItem(
+          body,
+          getAuthenticatedUserId(authUser),
+        ),
       })
       return
     }
@@ -2078,21 +2475,36 @@ const server = http.createServer(async (request, response) => {
         url.pathname.replace('/api/inspiration-list-items/', ''),
       )
       sendJson(response, 200, {
-        inspirationListItem: await updateInspirationListItem(id, body),
+        inspirationListItem: await updateInspirationListItem(
+          id,
+          body,
+          getAuthenticatedUserId(authUser),
+        ),
       })
       return
     }
 
     if (request.method === 'PUT' && url.pathname.startsWith('/api/recommendations/')) {
       const id = decodeURIComponent(url.pathname.replace('/api/recommendations/', ''))
-      sendJson(response, 200, { recommendation: await markRecommendationSeen(id) })
+      sendJson(response, 200, {
+        recommendation: await markRecommendationSeen(
+          id,
+          getAuthenticatedUserId(authUser),
+        ),
+      })
       return
     }
 
     if (request.method === 'PUT' && url.pathname.startsWith('/api/achievements/')) {
       const body = await readJsonBody(request)
       const id = decodeURIComponent(url.pathname.replace('/api/achievements/', ''))
-      sendJson(response, 200, { achievement: await updateAchievement(id, body) })
+      sendJson(response, 200, {
+        achievement: await updateAchievement(
+          id,
+          body,
+          getAuthenticatedUserId(authUser),
+        ),
+      })
       return
     }
 
@@ -2110,7 +2522,11 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === 'DELETE' && url.pathname.startsWith('/api/reactions/')) {
       const reactionId = decodeURIComponent(url.pathname.replace('/api/reactions/', ''))
-      sendJson(response, 200, await deleteReaction(reactionId))
+      sendJson(
+        response,
+        200,
+        await deleteReaction(reactionId, getAuthenticatedUserId(authUser)),
+      )
       return
     }
 

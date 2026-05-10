@@ -1,6 +1,7 @@
+import { uploadImageAsset } from '../../lib/api.js'
 import { useEffect, useMemo, useState } from 'react'
 import { useAppState } from '../../hooks/useAppState.js'
-import { normalizeImageUrl } from '../../lib/images.js'
+import { dataUrlToFile, normalizeImageUrl } from '../../lib/images.js'
 import {
   buildPlaceSuggestions,
   fetchPlaceSuggestions,
@@ -284,10 +285,23 @@ export function RestaurantForm({
     }
 
     try {
+      let coverPhotoUrl = normalizeImageUrl(currentCoverPhotoValue)
+
+      if (form.coverPhotoMode === 'file' && coverPhotoUrl) {
+        const uploadResponse = await uploadImageAsset({
+          file: dataUrlToFile(
+            coverPhotoUrl,
+            form.coverPhotoFileName || 'restaurante.jpg',
+          ),
+          kind: 'restaurant',
+        })
+        coverPhotoUrl = uploadResponse.upload?.url ?? ''
+      }
+
       const payload = validateRestaurantPayload(
         {
           ...form,
-          cover_photo_url: normalizeImageUrl(currentCoverPhotoValue),
+          cover_photo_url: coverPhotoUrl,
           lat: locationPreview.latNumber,
           lng: locationPreview.lngNumber,
           tags: form.tags,

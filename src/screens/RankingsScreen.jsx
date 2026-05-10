@@ -1,3 +1,4 @@
+import { EmptyState } from '../components/feedback/EmptyState.jsx'
 import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { FilterPanel } from '../components/filters/FilterPanel.jsx'
 import { ModalSheet } from '../components/layout/ModalSheet.jsx'
@@ -393,7 +394,6 @@ export function RankingsScreen({ onOpenReport }) {
         ranking_type: activeMode === 'global' ? 'global' : activeMode,
         filters: {
           ...activeFilters,
-          filterOrigin,
         },
         group_id: activeContext === 'group' ? currentGroup?.id ?? null : null,
         created_by_user_id: currentUser.id,
@@ -745,14 +745,22 @@ export function RankingsScreen({ onOpenReport }) {
           </div>
         ) : null}
 
-        <RankingList
-          entries={visibleRankingItems}
-          expandedEntryId={expandedEntryId}
-          onToggle={(entry) =>
-            setExpandedEntryId((currentId) => (currentId === entry.id ? '' : entry.id))
-          }
-          renderExpandedContent={renderExpandedContent}
-        />
+        {rankingEntries.length > 0 ? (
+          <RankingList
+            entries={visibleRankingItems}
+            expandedEntryId={expandedEntryId}
+            onToggle={(entry) =>
+              setExpandedEntryId((currentId) => (currentId === entry.id ? '' : entry.id))
+            }
+            renderExpandedContent={renderExpandedContent}
+          />
+        ) : (
+          <EmptyState
+            className="rankings-empty-block"
+            description="Sin datos para mostrar en este contexto."
+            title="Rankings vacíos"
+          />
+        )}
       </div>
 
       {isFilterPanelOpen ? (

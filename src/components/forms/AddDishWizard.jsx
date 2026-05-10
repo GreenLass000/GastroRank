@@ -1,7 +1,8 @@
+import { uploadImageAsset } from '../../lib/api.js'
 import { useEffect, useMemo, useState } from 'react'
 import { useAppState } from '../../hooks/useAppState.js'
 import { formatScore } from '../../lib/format.js'
-import { normalizeImageUrl } from '../../lib/images.js'
+import { dataUrlToFile, normalizeImageUrl } from '../../lib/images.js'
 import { calculateGeneralScore, getScoreTone } from '../../lib/scoring.js'
 import {
   normalizeEntityName,
@@ -398,6 +399,16 @@ export function AddDishWizard({
     }
 
     try {
+      let photoUrl = normalizeImageUrl(currentPhotoValue)
+
+      if (form.photoMode === 'file' && photoUrl) {
+        const uploadResponse = await uploadImageAsset({
+          file: dataUrlToFile(photoUrl, form.photoFileName || 'plato.jpg'),
+          kind: 'dish',
+        })
+        photoUrl = uploadResponse.upload?.url ?? ''
+      }
+
       const payload = validateDishEntryPayload(
         {
           restaurant_id: form.restaurant_id,
@@ -411,7 +422,7 @@ export function AddDishWizard({
           precio_plato: form.precio_plato,
           notas: form.notas,
           fecha: form.fecha,
-          foto_url: normalizeImageUrl(currentPhotoValue) || null,
+          foto_url: photoUrl || null,
           created_by_user_id: currentUser.id,
           group_id: form.visibility === 'group' ? currentGroup?.id ?? null : null,
           visibility: form.visibility,

@@ -87,6 +87,44 @@ async function requestJson(
   }
 }
 
+export async function uploadImageAsset({ file, kind = 'image' }) {
+  if (!(file instanceof File)) {
+    throw new Error('No se recibió ningún archivo válido para subir.')
+  }
+
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), 30000)
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('kind', kind)
+
+  try {
+    const response = await fetch(buildUrl('/api/upload'), {
+      method: 'POST',
+      headers: {
+        ...authHeaders(),
+      },
+      body: formData,
+      signal: controller.signal,
+    })
+    const payload = await response.json().catch(() => null)
+
+    if (!response.ok) {
+      throw new Error(payload?.error ?? `HTTP ${response.status}`)
+    }
+
+    return payload
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('La subida agotó el tiempo de espera.')
+    }
+
+    throw error
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
+
 export function fetchBootstrapData({ includeSocial = false } = {}) {
   return fetchJson(
     `/api/bootstrap${buildQueryString({

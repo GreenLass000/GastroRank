@@ -1,4 +1,6 @@
+import { EmptyState } from '../components/feedback/EmptyState.jsx'
 import { useEffect, useMemo, useState } from 'react'
+import './ProfileScreen.css'
 import { ProfileForm } from '../components/forms/ProfileForm.jsx'
 import { GroupForm } from '../components/forms/GroupForm.jsx'
 import { ModalSheet } from '../components/layout/ModalSheet.jsx'
@@ -390,6 +392,7 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
   const [shareCount, setShareCount] = useState(5)
   const [isShareLoading, setIsShareLoading] = useState(false)
   const [isPasswordSaving, setIsPasswordSaving] = useState(false)
+  const [isProfileSocialLoading, setIsProfileSocialLoading] = useState(true)
   const currentUserId = currentUser?.id ?? null
   const currentUserName = currentUser?.nombre || 'Tu perfil'
 
@@ -571,6 +574,7 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
 
     async function hydrateProfileSocialState() {
       try {
+        setIsProfileSocialLoading(true)
         await Promise.all([
           socialLoadState.follows ? Promise.resolve() : loadFollows(),
           socialLoadState.inspirationLists ? Promise.resolve() : loadInspirationLists(),
@@ -582,6 +586,10 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
             tone: 'error',
             message: `Error al cargar ❌ — ${error instanceof Error ? error.message : 'No se pudieron cargar los datos sociales del perfil.'}`,
           })
+        }
+      } finally {
+        if (!cancelled) {
+          setIsProfileSocialLoading(false)
         }
       }
     }
@@ -925,7 +933,12 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
             setIsAchievementsOpen(true)
           }}
         />
-        {recentAchievements.length > 0 ? (
+        {isProfileSocialLoading ? (
+          <EmptyState
+            description="Cargando logros, follows y listas guardadas."
+            title="Cargando..."
+          />
+        ) : recentAchievements.length > 0 ? (
           <div className="profile-badge-row">
             {recentAchievements.map((achievement) => (
               <article key={achievement.title} className="profile-badge-card">
@@ -1041,6 +1054,13 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
               )
             })}
           </div>
+        ) : currentUserEntries.length === 0 ? (
+          <EmptyState
+            actionLabel="Añadir plato"
+            description="Aún no has añadido platos."
+            onAction={() => onNavigate?.('home')}
+            title="Perfil vacío"
+          />
         ) : (
           <p className="community-empty-copy">
             No hay platos que coincidan con este filtro.
@@ -1157,7 +1177,12 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
           </form>
         ) : null}
 
-        {inspirationLists.length > 0 ? (
+        {isProfileSocialLoading ? (
+          <EmptyState
+            description="Cargando tus listas guardadas y datos sociales."
+            title="Cargando..."
+          />
+        ) : inspirationLists.length > 0 ? (
           <div className="list-stack">
             {inspirationLists.map((list) => {
               const items = inspirationListItems.filter((item) => item.list_id === list.id)

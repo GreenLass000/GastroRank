@@ -1,0 +1,22 @@
+.community-filter-bar {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+  border-radius: 1.5rem;
+  background:
+    radial-gradient(circle at top right, rgba(255, 107, 53, 0.18), transparent 36%),
+    #fff;
+  border: 1px solid rgba(123, 45, 139, 0.12);
+  margin-bottom: 1rem;
+}
+
+.community-filter-bar__group,
+.community-filter-bar__controls,
+.community-filter-bar__active {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.community-filter-bar__controls {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}

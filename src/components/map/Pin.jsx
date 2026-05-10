@@ -29,7 +29,7 @@ function renderPinContent(marker, pinStyle) {
 }
 
 export function Pin({ isActive, marker, onSelect, pinStyle, position }) {
-  const tone = getScoreTone(typeof marker.score === 'number' ? marker.score : 0)
+  const tone = getScoreTone(marker.score)
 
   return (
     <button

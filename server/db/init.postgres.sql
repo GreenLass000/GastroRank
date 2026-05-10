@@ -214,6 +214,7 @@ CREATE INDEX IF NOT EXISTS idx_inspiration_list_items_list_id ON inspiration_lis
 CREATE INDEX IF NOT EXISTS idx_inspiration_list_items_dish_entry_id ON inspiration_list_items(dish_entry_id);
 CREATE INDEX IF NOT EXISTS idx_recommendations_to_user_id ON recommendations(to_user_id);
 CREATE INDEX IF NOT EXISTS idx_recommendations_from_user_id ON recommendations(from_user_id);
+CREATE INDEX IF NOT EXISTS idx_recommendations_dish_entry_id ON recommendations(dish_entry_id);
 CREATE INDEX IF NOT EXISTS idx_achievements_user_id ON achievements(user_id);
 
 CREATE OR REPLACE VIEW restaurant_scores AS

@@ -56,7 +56,7 @@ export function CommunityCard({ entry, onOpen, onSave }) {
           <div className="community-card__header">
             <strong>{entry.nombre_plato ?? entry.dishType?.nombre ?? 'Plato'}</strong>
             <span
-              className={`ranking-card__score ranking-card__score--${getScoreTone(entry.puntuacion_general ?? 0)}`}
+              className={`ranking-card__score ranking-card__score--${getScoreTone(entry.puntuacion_general)}`}
             >
               {formatScore(entry.puntuacion_general ?? 0)}
             </span>

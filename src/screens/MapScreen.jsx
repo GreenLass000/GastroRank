@@ -1,3 +1,4 @@
+import { EmptyState } from '../components/feedback/EmptyState.jsx'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { MapView } from '../components/map/MapView.jsx'
 import { usePersistentState } from '../hooks/usePersistentState.js'
@@ -82,6 +83,7 @@ function buildMapRestaurants({
       (category) => category.id === bestEntry?.categoria_id,
     )
     const distanceFromUserMeters = calculateDistanceMeters(userPosition, restaurant)
+    const averageScore = calculateAverageScore(restaurantEntries)
 
     return {
       ...restaurant,
@@ -94,8 +96,8 @@ function buildMapRestaurants({
       distanceFromUserMeters,
       distanceFromUserLabel: formatDistance(distanceFromUserMeters),
       pinStyle: PIN_STYLES.includes(defaultPinStyle) ? defaultPinStyle : DEFAULT_PIN_STYLE,
-      restaurant_score: calculateAverageScore(restaurantEntries),
-      score: calculateAverageScore(restaurantEntries),
+      restaurant_score: averageScore,
+      score: averageScore,
       total_entries: restaurantEntries.length,
     }
   })
@@ -265,6 +267,10 @@ export function MapScreen({ onCreateRestaurantAtLocation, onOpenEntity }) {
   const selectedRestaurant =
     restaurantsWithinActiveRadius.find((restaurant) => restaurant.id === selectedRestaurantId) ||
     null
+  const hasRegisteredRestaurants = useMemo(
+    () => restaurants.some((restaurant) => hasValidCoordinates(restaurant)),
+    [restaurants],
+  )
 
   useEffect(() => {
     if (hasSeenOnboarding) {
@@ -463,6 +469,15 @@ export function MapScreen({ onCreateRestaurantAtLocation, onOpenEntity }) {
 
   return (
     <section className="screen screen--map" aria-label="Pantalla de mapa">
+      {!hasRegisteredRestaurants ? (
+        <EmptyState
+          actionLabel="Añadir restaurante"
+          description="No hay restaurantes registrados aún."
+          onAction={() => onCreateRestaurantAtLocation?.(userPosition)}
+          title="Mapa vacío"
+        />
+      ) : null}
+
       <div className="field--autocomplete map-search">
         <label className="map-search__field">
           <span className="sr-only">Buscar zona o lugar</span>
@@ -528,7 +543,11 @@ export function MapScreen({ onCreateRestaurantAtLocation, onOpenEntity }) {
         ))}
       </div>
 
-      <div className={`map-stage${isFullscreen ? ' map-stage--fullscreen' : ''}`}>
+      <div
+        className={`map-stage${isFullscreen ? ' map-stage--fullscreen' : ''}${
+          !hasRegisteredRestaurants ? ' map-stage--disabled' : ''
+        }`}
+      >
         <div className="map-stage__canvas">
           <MapView
             center={viewportRequest.center}

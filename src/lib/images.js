@@ -31,6 +31,25 @@ export function normalizeImageUrl(value) {
   return typeof value === 'string' ? value.trim() : ''
 }
 
+export function dataUrlToFile(dataUrl, fileName = 'imagen.jpg') {
+  const normalizedValue = normalizeImageUrl(dataUrl)
+  const [header, body] = normalizedValue.split(',')
+
+  if (!header?.startsWith('data:image/') || !body) {
+    throw new Error('La imagen preparada no tiene un formato válido.')
+  }
+
+  const mimeType = header.slice(5, header.indexOf(';')) || 'image/jpeg'
+  const binary = window.atob(body)
+  const bytes = new Uint8Array(binary.length)
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index)
+  }
+
+  return new File([bytes], fileName, { type: mimeType })
+}
+
 export function isImagePreviewable(value) {
   const normalizedValue = normalizeImageUrl(value)
 

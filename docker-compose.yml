@@ -22,11 +22,14 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://gastrorank:gastrorank@db:5432/gastrorank
+      JWT_SECRET: gastrorank-dev-docker-secret
       PORT: 3030
       HOST: 0.0.0.0
     depends_on:
       db:
         condition: service_healthy
+    volumes:
+      - api_uploads:/app/server/uploads
     ports:
       - "3333:3030"
 
@@ -42,3 +45,4 @@ services:
 
 volumes:
   pgdata:
+  api_uploads:

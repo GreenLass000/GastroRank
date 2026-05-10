@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet'
 import { formatScore } from '../../lib/format.js'
-import { getMapsProvider, hasValidCoordinates } from '../../lib/maps.js'
+import { hasValidCoordinates } from '../../lib/maps.js'
 import { getScoreTone } from '../../lib/scoring.js'
 
 const LONG_PRESS_MS = 500
@@ -177,9 +177,7 @@ function createPopupContent(marker, onPopupAction) {
   const metaRow = document.createElement('div')
   metaRow.className = 'map-popup__meta'
   const scoreBadge = document.createElement('span')
-  scoreBadge.className = `ranking-card__score ranking-card__score--${getScoreTone(
-    typeof marker.score === 'number' ? marker.score : 0,
-  )}`
+  scoreBadge.className = `ranking-card__score ranking-card__score--${getScoreTone(marker.score)}`
   scoreBadge.textContent =
     typeof marker.score === 'number' ? formatScore(marker.score) : 'N/R'
   metaRow.appendChild(scoreBadge)
@@ -219,7 +217,6 @@ function getViewportSnapshot(map) {
 }
 
 export function MapView({
-  allowAutoLocate = false,
   center = null,
   children = null,
   className = '',
@@ -252,7 +249,6 @@ export function MapView({
   const tileLayerRef = useRef(null)
   const markerLayerRef = useRef(null)
   const hasInitialFitRef = useRef(false)
-  const didResolveInitialCenterRef = useRef(false)
   const latestViewportRequestRef = useRef('')
   const controlledCenter = useMemo(
     () =>
@@ -266,6 +262,8 @@ export function MapView({
   )
   const controlledZoom = Number.isFinite(zoom) ? Number(zoom) : null
   const initialZoom = controlledZoom ?? (mode === 'mini' ? 14 : 13)
+  const initialCenterRef = useRef(controlledCenter)
+  const initialZoomRef = useRef(initialZoom)
   const [currentZoom, setCurrentZoom] = useState(initialZoom)
   const effectiveZoom = controlledZoom ?? currentZoom
   const pressStateRef = useRef({
@@ -280,7 +278,6 @@ export function MapView({
     () => markers.filter((marker) => hasValidCoordinates(marker)),
     [markers],
   )
-  const provider = getMapsProvider()
   const effectiveFocusMarker = useMemo(
     () =>
       hasValidCoordinates(focusMarker)
@@ -329,6 +326,14 @@ export function MapView({
   }, [onViewportChange])
 
   useEffect(() => {
+    initialCenterRef.current = controlledCenter
+  }, [controlledCenter])
+
+  useEffect(() => {
+    initialZoomRef.current = initialZoom
+  }, [initialZoom])
+
+  useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) {
       return undefined
     }
@@ -352,10 +357,10 @@ export function MapView({
     tileLayerRef.current.addTo(map)
     markerLayerRef.current = L.layerGroup().addTo(map)
     map.setView(
-      controlledCenter
-        ? [controlledCenter.lat, controlledCenter.lng]
+      initialCenterRef.current
+        ? [initialCenterRef.current.lat, initialCenterRef.current.lng]
         : VALLADOLID_CENTER,
-      initialZoom,
+      initialZoomRef.current,
     )
 
     const emitViewportChange = () => {
@@ -461,44 +466,9 @@ export function MapView({
       tileLayerRef.current = null
       markerLayerRef.current = null
       hasInitialFitRef.current = false
-      didResolveInitialCenterRef.current = false
       latestViewportRequestRef.current = ''
     }
-  }, [controlledCenter, initialZoom, mode])
-
-  useEffect(() => {
-    const map = mapRef.current
-
-    if (
-      !map ||
-      mode !== 'full' ||
-      !allowAutoLocate ||
-      didResolveInitialCenterRef.current ||
-      controlledCenter
-    ) {
-      return
-    }
-
-    didResolveInitialCenterRef.current = true
-
-    if (!navigator.geolocation) {
-      map.setView(VALLADOLID_CENTER, 13)
-      return
-    }
-
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        map.setView([position.coords.latitude, position.coords.longitude], 14)
-      },
-      () => {
-        map.setView(VALLADOLID_CENTER, 13)
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 5000,
-      },
-    )
-  }, [allowAutoLocate, controlledCenter, mode])
+  }, [mode])
 
   useEffect(() => {
     const map = mapRef.current
@@ -544,7 +514,7 @@ export function MapView({
     window.setTimeout(() => {
       map.invalidateSize()
     }, 0)
-  })
+  }, [])
 
   useEffect(() => {
     const map = mapRef.current
@@ -725,7 +695,7 @@ export function MapView({
     <div className={`map-view map-view--${mode}${className ? ` ${className}` : ''}`}>
       {showTopline ? (
         <div className="map-view__topline">
-          <span>{instructionLabel || (provider === 'leaflet-osm' ? 'Mapa' : 'Mapa')}</span>
+          <span>{instructionLabel || 'Mapa'}</span>
         </div>
       ) : null}
 

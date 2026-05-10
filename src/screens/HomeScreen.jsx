@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { EmptyState } from '../components/feedback/EmptyState.jsx'
 import { MapView } from '../components/map/MapView.jsx'
 import { SectionHeader } from '../components/layout/SectionHeader.jsx'
 import { useAppState } from '../hooks/useAppState.js'
@@ -15,7 +16,12 @@ import {
 } from '../lib/maps.js'
 import { getScoreTone } from '../lib/scoring.js'
 
-export function HomeScreen({ onNavigate, onOpenEntity, onOpenSearch }) {
+export function HomeScreen({
+  onNavigate,
+  onOpenAddDish,
+  onOpenEntity,
+  onOpenSearch,
+}) {
   const {
     categories,
     currentUser,
@@ -157,34 +163,43 @@ export function HomeScreen({ onNavigate, onOpenEntity, onOpenSearch }) {
             actionLabel="Ver explorar"
             onAction={() => onNavigate?.('community')}
           />
-          <div className="horizontal-scroll">
-            {latestEntries.map((dish) => (
-              <button
-                key={dish.id}
-                className="list-card list-card--button"
-                type="button"
-                onClick={() => onOpenEntity?.({ type: 'dishEntry', id: dish.id })}
-              >
-                <div className="list-card__title">
-                  <span className="emoji-badge" aria-hidden="true">
-                    {categories.find((category) => category.id === dish.categoria_id)?.icono}
-                  </span>
-                  <div>
-                    <strong>{dish.dishTypeName}</strong>
-                    <p>{dish.restaurantName}</p>
+          {latestEntries.length > 0 ? (
+            <div className="horizontal-scroll">
+              {latestEntries.map((dish) => (
+                <button
+                  key={dish.id}
+                  className="list-card list-card--button"
+                  type="button"
+                  onClick={() => onOpenEntity?.({ type: 'dishEntry', id: dish.id })}
+                >
+                  <div className="list-card__title">
+                    <span className="emoji-badge" aria-hidden="true">
+                      {categories.find((category) => category.id === dish.categoria_id)?.icono}
+                    </span>
+                    <div>
+                      <strong>{dish.dishTypeName}</strong>
+                      <p>{dish.restaurantName}</p>
+                    </div>
                   </div>
-                </div>
-                <div className="list-card__meta">
-                  <span className="status-pill">{dish.visibility}</span>
-                  <span
-                    className={`ranking-card__score ranking-card__score--${getScoreTone(dish.puntuacion_general)}`}
-                  >
-                    {formatScore(dish.puntuacion_general)}
-                  </span>
-                </div>
-              </button>
-            ))}
-          </div>
+                  <div className="list-card__meta">
+                    <span className="status-pill">{dish.visibility}</span>
+                    <span
+                      className={`ranking-card__score ranking-card__score--${getScoreTone(dish.puntuacion_general)}`}
+                    >
+                      {formatScore(dish.puntuacion_general)}
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <EmptyState
+              actionLabel="Añadir plato"
+              description="Aún no has añadido ningún plato. ¡Empieza puntuando!"
+              onAction={onOpenAddDish}
+              title="Inicio vacío"
+            />
+          )}
         </div>
 
         <div>
@@ -270,10 +285,10 @@ export function HomeScreen({ onNavigate, onOpenEntity, onOpenSearch }) {
               ))}
             </div>
           ) : (
-            <article className="surface-card">
-              <strong>Sin datos aún</strong>
-              <p>Aquí aparecerá el ranking del plato seleccionado.</p>
-            </article>
+            <EmptyState
+              description="Sin datos para mostrar en este contexto."
+              title="Top por plato vacío"
+            />
           )}
         </div>
       </div>
@@ -389,13 +404,10 @@ export function HomeScreen({ onNavigate, onOpenEntity, onOpenSearch }) {
           ))}
         </div>
       ) : (
-        <article className="surface-card">
-          <strong>Sin restaurantes cercanos ahora mismo</strong>
-          <p>
-            Amplía el radio o abre el mapa completo para explorar más zonas desde{' '}
-            {homeNearbySection.originLabel.toLowerCase()}.
-          </p>
-        </article>
+        <EmptyState
+          description={`Amplía el radio o abre el mapa completo para explorar más zonas desde ${homeNearbySection.originLabel.toLowerCase()}.`}
+          title="Sin restaurantes cercanos ahora mismo"
+        />
       )}
     </section>
   )

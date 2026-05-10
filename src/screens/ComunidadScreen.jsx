@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
+import './ComunidadScreen.css'
+import '../components/community/Community.css'
+import { EmptyState } from '../components/feedback/EmptyState.jsx'
 import { StatusBanner } from '../components/feedback/StatusBanner.jsx'
 import { CommunityGrid } from '../components/community/CommunityGrid.jsx'
 import { EntryDetailModal } from '../components/community/EntryDetailModal.jsx'
@@ -110,9 +113,19 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
   const [selectedEntry, setSelectedEntry] = useState(null)
   const [isFeedLoading, setIsFeedLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
+  const [isSocialHydrating, setIsSocialHydrating] = useState(true)
   const [feedError, setFeedError] = useState('')
   const [socialLoadError, setSocialLoadError] = useState('')
   const [dismissedRecommendationIds, setDismissedRecommendationIds] = useState([])
+  const hasActiveCommunityFilters = useMemo(
+    () =>
+      filters.categoryIds.length > 0 ||
+      filters.dishTypeIds.length > 0 ||
+      filters.priceRange.length > 0 ||
+      filters.minScore != null ||
+      Boolean(filters.datePreset),
+    [filters],
+  )
 
   const recommendationItems = useMemo(
     () =>
@@ -132,6 +145,7 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
 
     async function hydrateSocialState() {
       try {
+        setIsSocialHydrating(true)
         await Promise.all([
           socialLoadState.follows ? Promise.resolve() : loadFollows(),
           socialLoadState.recommendations ? Promise.resolve() : loadRecommendations(),
@@ -148,6 +162,10 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
               ? error.message
               : 'No se pudieron cargar los datos sociales de comunidad.',
           )
+        }
+      } finally {
+        if (!cancelled) {
+          setIsSocialHydrating(false)
         }
       }
     }
@@ -190,10 +208,10 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
         }
 
         setFeedState({
-          entries: response.entries ?? [],
+          entries: response.items ?? response.entries ?? [],
           page: response.page ?? 1,
-          totalPages: response.total_pages ?? 1,
-          totalItems: response.total_items ?? 0,
+          totalPages: response.totalPages ?? response.total_pages ?? 1,
+          totalItems: response.total ?? response.total_items ?? 0,
         })
         setFeedError('')
       } catch (error) {
@@ -302,13 +320,14 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
       },
     })
     setFeedState({
-      entries: response.entries ?? [],
+      entries: response.items ?? response.entries ?? [],
       page: response.page ?? 1,
-      totalPages: response.total_pages ?? 1,
-      totalItems: response.total_items ?? 0,
+      totalPages: response.totalPages ?? response.total_pages ?? 1,
+      totalItems: response.total ?? response.total_items ?? 0,
     })
     setSelectedEntry(
-      response.entries?.find((entry) => entry.id === selectedEntry.id) ?? null,
+      (response.items ?? response.entries)?.find((entry) => entry.id === selectedEntry.id) ??
+        null,
     )
   }
 
@@ -405,10 +424,22 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
         <>
           <ParaTiSection items={recommendationItems} onOpen={handleOpenRecommendation} />
           {isFeedLoading ? (
-            <article className="surface-card">
-              <strong>Cargando...</strong>
-              <p>Estamos preparando tu feed de amigos.</p>
-            </article>
+            <EmptyState
+              description="Estamos preparando tu feed de amigos."
+              title="Cargando..."
+            />
+          ) : isSocialHydrating ? (
+            <EmptyState
+              description="Cargando follows, listas y recomendaciones para tu comunidad."
+              title="Cargando..."
+            />
+          ) : mutualFollows.length === 0 ? (
+            <EmptyState
+              actionLabel="Buscar amigos →"
+              description="No sigues a nadie todavía. Busca amigos →"
+              onAction={onOpenSearch}
+              title="Feed de amigos vacío"
+            />
           ) : feedState.entries.length > 0 ? (
             <CommunityGrid
               entries={feedState.entries}
@@ -416,20 +447,17 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
               onSaveEntry={handleSaveEntry}
             />
           ) : (
-            <article className="surface-card">
-              <strong>👥 Aún no hay platos en tu feed de amigos</strong>
-              <p>Sigue a gente foodie o abre el buscador para descubrir perfiles.</p>
-              <button className="primary-button" type="button" onClick={onOpenSearch}>
-                Buscar amigos →
-              </button>
-            </article>
+            <EmptyState
+              description="Tus amistades todavía no han publicado platos visibles para este feed."
+              title="👥 Aún no hay platos en tu feed de amigos"
+            />
           )}
         </>
       ) : isFeedLoading ? (
-        <article className="surface-card">
-          <strong>Cargando...</strong>
-          <p>Buscando platos públicos de la comunidad.</p>
-        </article>
+        <EmptyState
+          description="Buscando platos públicos de la comunidad."
+          title="Cargando..."
+        />
       ) : feedState.entries.length > 0 ? (
         <CommunityGrid
           entries={feedState.entries}
@@ -437,13 +465,20 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
           onSaveEntry={handleSaveEntry}
         />
       ) : (
-        <article className="surface-card">
-          <strong>🍽 No hay resultados con estos filtros</strong>
-          <p>Prueba a ampliar la selección o resetear los filtros activos.</p>
-          <button className="primary-button" type="button" onClick={resetFilters}>
-            Resetear filtros
-          </button>
-        </article>
+        <EmptyState
+          actionLabel={hasActiveCommunityFilters ? 'Resetear filtros' : ''}
+          description={
+            hasActiveCommunityFilters
+              ? 'Prueba a ampliar la selección o resetear los filtros activos.'
+              : 'Nadie ha publicado entradas públicas aún.'
+          }
+          onAction={hasActiveCommunityFilters ? resetFilters : undefined}
+          title={
+            hasActiveCommunityFilters
+              ? '🍽 No hay resultados con estos filtros'
+              : 'Explorar vacío'
+          }
+        />
       )}
 
       <Pagination

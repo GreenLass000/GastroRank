@@ -212,6 +212,7 @@ function App() {
     return (
       <ActiveScreen
         onNavigate={handleScreenChange}
+        onOpenAddDish={() => setIsDishWizardOpen(true)}
         onOpenEntity={openEntityDetail}
         onOpenSearch={() => setIsSearchOpen(true)}
       />
@@ -364,7 +365,15 @@ function App() {
         </>
       ) : null}
       {(isLoading || isShareLoading || (requiresAuth && !authChecked)) ? (
-        <LoadingOverlay message="Cargando..." />
+        <LoadingOverlay
+          message={
+            isShareLoading
+              ? 'Cargando informe público...'
+              : requiresAuth && !authChecked
+                ? 'Cargando tu cuenta...'
+                : 'Cargando...'
+          }
+        />
       ) : null}
       <ToastCenter message={toast.message} tone={toast.tone} />
 

@@ -1,6 +1,7 @@
+import { uploadImageAsset } from '../../lib/api.js'
 import { useEffect, useState } from 'react'
 import { useAppState } from '../../hooks/useAppState.js'
-import { normalizeImageUrl } from '../../lib/images.js'
+import { dataUrlToFile, normalizeImageUrl } from '../../lib/images.js'
 import { validateUserPayload } from '../../lib/validation.js'
 import { ImageInput } from './ImageInput.jsx'
 
@@ -46,10 +47,20 @@ export function ProfileForm({ initialValues, onCancel, onSaved }) {
     setStatus({ tone: '', message: '' })
 
     try {
+      let avatarUrl = normalizeImageUrl(currentAvatarValue)
+
+      if (form.avatarMode === 'file' && avatarUrl) {
+        const uploadResponse = await uploadImageAsset({
+          file: dataUrlToFile(avatarUrl, form.avatarFileName || 'avatar.jpg'),
+          kind: 'avatar',
+        })
+        avatarUrl = uploadResponse.upload?.url ?? ''
+      }
+
       const payload = validateUserPayload({
         nombre: form.nombre,
         bio: form.bio,
-        avatar_url: normalizeImageUrl(currentAvatarValue),
+        avatar_url: avatarUrl,
       })
 
       setIsSubmitting(true)

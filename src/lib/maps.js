@@ -201,6 +201,7 @@ export async function fetchPlaceSuggestions(query, { signal } = {}) {
     method: 'GET',
     headers: {
       Accept: 'application/json',
+      'User-Agent': 'GastroRank/1.0 (gastrorank@example.com)',
     },
     signal,
   })
@@ -260,7 +261,7 @@ export function buildMapBounds(points) {
   }))
 
   if (validPoints.length === 0) {
-      return {
+    return {
       minLat: DEFAULT_MAP_CENTER.lat - DEFAULT_SPAN.lat / 2,
       maxLat: DEFAULT_MAP_CENTER.lat + DEFAULT_SPAN.lat / 2,
       minLng: DEFAULT_MAP_CENTER.lng - DEFAULT_SPAN.lng / 2,
