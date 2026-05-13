@@ -1,8 +1,11 @@
 .auth-screen {
-  min-height: calc(100svh - 20px);
+  min-height: 100svh;
+  height: 100svh;
   display: grid;
-  gap: 20px;
+  gap: 0;
   align-items: stretch;
+  padding: 0;
+  overflow: hidden;
 }
 
 .auth-card {
@@ -353,7 +356,8 @@
 
 .auth-flow {
   width: 100%;
-  min-height: 100svh;
+  min-height: 100%;
+  height: 100%;
   display: block;
   padding: 0;
   overflow: hidden;
@@ -404,14 +408,16 @@ html[data-theme='dark'] .auth-flow {
 
 .auth-flow__onboarding {
   width: 100%;
-  min-height: 100svh;
+  min-height: 100%;
+  height: 100%;
 }
 
 .auth-flow__stage {
   position: relative;
   width: 100%;
-  min-height: 100svh;
-  padding: 32px 24px 28px;
+  min-height: 100%;
+  height: 100%;
+  padding: clamp(1rem, 2.5svh, 2rem) clamp(1rem, 3vw, 1.5rem) clamp(0.875rem, 2svh, 1.75rem);
   border: 0;
   background: var(--auth-phone-bg);
   box-shadow: none;
@@ -423,14 +429,14 @@ html[data-theme='dark'] .auth-flow {
 
 .auth-flow__decor {
   position: absolute;
-  inset: 24px 24px 86px;
+  inset: clamp(1rem, 2.5svh, 1.5rem) clamp(1rem, 3vw, 1.5rem) 4.5rem;
   pointer-events: none;
 }
 
 .auth-flow__decor span {
   position: absolute;
   opacity: 0.12;
-  font-size: 1.8rem;
+  font-size: clamp(1.1rem, 2.5svh, 1.8rem);
 }
 
 .auth-flow__decor span:nth-child(1) {
@@ -485,8 +491,8 @@ html[data-theme='dark'] .auth-flow {
   display: grid;
   grid-template-rows: 1fr auto auto;
   align-content: start;
-  gap: 22px;
-  padding: 12px 8px 8px;
+  gap: clamp(0.75rem, 2svh, 1.375rem);
+  padding: clamp(0.5rem, 1.5svh, 0.75rem) clamp(0.25rem, 1vw, 0.5rem) 0.5rem;
 }
 
 .auth-flow__slide-main {
@@ -494,19 +500,19 @@ html[data-theme='dark'] .auth-flow {
   align-content: center;
   justify-items: center;
   text-align: center;
-  gap: 24px;
+  gap: clamp(0.875rem, 2.4svh, 1.5rem);
 }
 
 .auth-flow__logo-badge {
-  width: 108px;
-  height: 108px;
+  width: clamp(4.5rem, 12svh, 6.75rem);
+  height: clamp(4.5rem, 12svh, 6.75rem);
   display: grid;
   place-items: center;
-  border-radius: 32px;
+  border-radius: clamp(1.25rem, 3svh, 2rem);
   background: linear-gradient(180deg, #7a3cf0 0%, #5d31e6 100%);
   color: #ffd35f;
   font-family: var(--font-display);
-  font-size: 3.4rem;
+  font-size: clamp(2rem, 5.5svh, 3.4rem);
   font-weight: 800;
   box-shadow:
     0 24px 42px rgba(93, 49, 230, 0.26),
@@ -515,13 +521,13 @@ html[data-theme='dark'] .auth-flow {
 
 .auth-flow__copy {
   display: grid;
-  gap: 14px;
+  gap: clamp(0.625rem, 1.6svh, 0.875rem);
   justify-items: center;
 }
 
 .auth-flow__eyebrow {
   color: var(--auth-phone-muted);
-  font-size: 0.86rem;
+  font-size: clamp(0.72rem, 1.5svh, 0.86rem);
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -530,38 +536,38 @@ html[data-theme='dark'] .auth-flow {
 .auth-flow__copy h1 {
   max-width: 10ch;
   color: var(--auth-phone-text);
-  font-size: clamp(2.6rem, 7vw, 4rem);
+  font-size: clamp(2rem, 5.5svh, 4rem);
   line-height: 0.96;
 }
 
 .auth-flow__copy p {
   max-width: 24ch;
   color: var(--auth-phone-muted);
-  font-size: 1rem;
+  font-size: clamp(0.92rem, 1.9svh, 1rem);
 }
 
 .auth-flow__tags {
   display: flex;
   justify-content: center;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: clamp(0.4rem, 1svh, 0.625rem);
 }
 
 .auth-flow__tag {
-  min-height: 36px;
+  min-height: clamp(2rem, 4svh, 2.25rem);
   display: inline-flex;
   align-items: center;
-  padding: 0 14px;
+  padding: 0 clamp(0.65rem, 1.4svh, 0.875rem);
   border-radius: 999px;
   background: var(--auth-chip-bg);
   border: 1px solid var(--auth-border-soft);
   color: var(--auth-phone-muted);
-  font-size: 0.9rem;
+  font-size: clamp(0.8rem, 1.6svh, 0.9rem);
 }
 
 .auth-flow__slide-actions {
   display: grid;
-  gap: 12px;
+  gap: clamp(0.55rem, 1.2svh, 0.75rem);
   justify-items: stretch;
 }
 
@@ -569,13 +575,14 @@ html[data-theme='dark'] .auth-flow {
   text-align: center;
   color: var(--auth-phone-text);
   font-weight: 600;
+  font-size: clamp(0.92rem, 1.8svh, 1rem);
 }
 
 .auth-flow__slide-primary,
 .auth-flow__slide-secondary {
-  min-height: 56px;
+  min-height: clamp(3rem, 6svh, 3.5rem);
   border-radius: 999px;
-  padding: 0 20px;
+  padding: 0 1rem;
   font-weight: 800;
 }
 
@@ -594,11 +601,11 @@ html[data-theme='dark'] .auth-flow {
 
 .auth-flow__phone-footer {
   display: grid;
-  gap: 8px;
+  gap: 0.5rem;
   justify-items: center;
   position: relative;
   z-index: 1;
-  padding-bottom: max(8px, env(safe-area-inset-bottom));
+  padding-bottom: max(0.35rem, env(safe-area-inset-bottom));
 }
 
 .auth-flow__dots {
@@ -608,15 +615,15 @@ html[data-theme='dark'] .auth-flow {
 }
 
 .auth-flow__dot {
-  width: 10px;
-  height: 10px;
+  width: 0.625rem;
+  height: 0.625rem;
   border: 0;
   border-radius: 999px;
   background: rgba(127, 127, 140, 0.26);
 }
 
 .auth-flow__dot--active {
-  width: 28px;
+  width: 1.75rem;
   background: linear-gradient(135deg, #7b2d8b, #5d31e6);
 }
 
@@ -728,19 +735,20 @@ html[data-theme='dark'] .auth-flow {
 
 .auth-flow__form-shell {
   width: 100%;
-  min-height: 100svh;
+  min-height: 100%;
+  height: 100%;
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: 32px 24px;
+  padding: clamp(1rem, 3svh, 2rem) clamp(1rem, 3vw, 1.5rem);
   overflow: hidden;
 }
 
 .auth-flow__form-card {
   width: min(100%, 460px);
   display: grid;
-  gap: 18px;
-  padding: 28px;
+  gap: clamp(0.875rem, 2svh, 1.125rem);
+  padding: clamp(0.75rem, 2svh, 1.5rem) clamp(0.5rem, 1.5vw, 1rem);
   border-radius: 0;
   border: 0;
   background: var(--auth-surface-strong);
@@ -760,18 +768,19 @@ html[data-theme='dark'] .auth-flow {
 .auth-flow__form-header {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 14px;
+  gap: clamp(0.75rem, 1.6svh, 0.875rem);
   align-items: start;
 }
 
 .auth-flow__form-header h2 {
-  font-size: 2rem;
+  font-size: clamp(1.6rem, 4svh, 2rem);
   color: var(--auth-text);
 }
 
 .auth-flow__form-header p {
   margin-top: 6px;
   color: var(--auth-text-muted);
+  font-size: clamp(0.92rem, 1.8svh, 1rem);
 }
 
 .auth-flow__form-card .field span {
@@ -914,8 +923,8 @@ html[data-theme='dark'] .auth-flow {
 
   .auth-flow__stage {
     width: 100%;
-    min-height: 100svh;
-    padding: 24px 18px 20px;
+    min-height: 100%;
+    padding: clamp(0.875rem, 2.4svh, 1.5rem) clamp(0.875rem, 4vw, 1.125rem) clamp(0.75rem, 2svh, 1rem);
   }
 
   .auth-flow__slide {
@@ -934,11 +943,11 @@ html[data-theme='dark'] .auth-flow {
   }
 
   .auth-flow__form-card {
-    padding: 22px 8px;
+    padding: clamp(0.75rem, 2svh, 1rem) 0.25rem;
   }
 
   .auth-flow__form-shell {
-    padding: 24px 18px;
+    padding: clamp(0.875rem, 2.4svh, 1.5rem) clamp(0.875rem, 4vw, 1.125rem);
   }
 
   .auth-card__hero,

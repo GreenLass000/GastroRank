@@ -76,6 +76,14 @@
   overflow-x: clip;
 }
 
+.screen-container--auth {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
 .screen-container--with-floating-search {
   padding-top: 92px;
 }

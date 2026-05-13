@@ -329,7 +329,7 @@ function App() {
       <main
         className={`screen-container${
           isHomeScreen && !shareToken ? ' screen-container--with-floating-search' : ''
-        }`}
+        }${shouldShowAuthScreen ? ' screen-container--auth' : ''}`}
       >
         {loadError && !shouldShowAuthScreen ? (
           <StatusBanner
