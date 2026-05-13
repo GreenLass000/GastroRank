@@ -15,60 +15,71 @@ const INITIAL_REGISTER_FORM = {
 const ONBOARDING_SLIDES = [
   {
     id: 'intro',
-    eyebrow: 'Bienvenido a GastroRank',
-    title: 'Descubre, prueba y rankea sin perder el hilo.',
+    eyebrow: 'Bienvenido',
+    title: 'GastroRank',
     description:
-      'Guarda tus hallazgos, vuelve a tus favoritos y empieza tu ranking personal en pocos segundos.',
-    accent: 'No tienes cuenta? Comenzar',
+      'Descubre. Prueba. Rankea. Guarda tus sitios favoritos y empieza tu criterio gastronómico.',
+    accent: '¿No tienes cuenta?',
     primaryLabel: 'Comenzar',
-    primaryTab: 'register',
     secondaryLabel: 'Iniciar sesión',
     secondaryTab: 'login',
-    highlights: ['Rankings reales', 'Tus platos favoritos', 'Acceso rápido'],
+    highlights: ['Descubre', 'Prueba', 'Rankea'],
   },
   {
     id: 'create',
-    eyebrow: 'Crea, explora y comparte',
-    title: 'Convierte cada salida en una pista útil para el resto.',
+    eyebrow: 'Ventana 2',
+    title: 'Crea, explora y comparte',
     description:
-      'Añade platos, descubre sitios por categoría y comparte hallazgos que merezcan entrar en el mapa.',
-    accent: 'Tu criterio también construye la experiencia',
-    primaryLabel: 'Explorar acceso',
-    primaryTab: 'login',
-    secondaryLabel: 'Ver siguiente',
+      'Añade platos, encuentra nuevos restaurantes y comparte recomendaciones que merezcan quedarse.',
+    accent: 'Explora lo que está puntuando la comunidad',
+    primaryLabel: 'Siguiente',
     secondaryAction: 'next',
-    highlights: ['Crea listas', 'Explora rankings', 'Comparte hallazgos'],
+    secondaryLabel: 'Iniciar sesión',
+    secondaryTab: 'login',
+    highlights: ['Crea', 'Explora', 'Comparte'],
   },
   {
     id: 'community',
-    eyebrow: 'Haz crecer la comunidad',
-    title: 'Tu próxima recomendación puede ayudar a toda la ciudad.',
+    eyebrow: 'Ventana 3',
+    title: 'Haz crecer a la comunidad',
     description:
-      'Súmate para registrar nuevos lugares, puntuar con contexto y dejar una comunidad gastronómica más viva.',
-    accent: 'Empieza hoy',
+      'Súmate para descubrir más sitios, añadir contexto y construir un mapa gastronómico vivo.',
+    accent: 'Forma parte del movimiento foodie local',
     primaryLabel: 'Registrarse',
     primaryTab: 'register',
     secondaryLabel: 'Iniciar sesión',
     secondaryTab: 'login',
-    highlights: ['Más sitios', 'Más opiniones', 'Más contexto'],
+    highlights: ['Comunidad', 'Nuevos lugares', 'Opiniones reales'],
   },
 ]
+
+const SLIDE_SYMBOLS = ['G', '△', '✦']
 
 function validateEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim())
 }
 
+function getSecondaryAction(slide, activeSlide, goToSlide, handleSlideAction) {
+  if (slide.secondaryAction === 'next') {
+    return () => goToSlide(activeSlide + 1)
+  }
+
+  if (slide.secondaryTab) {
+    return () => handleSlideAction(slide.secondaryTab)
+  }
+
+  return undefined
+}
+
 export function AuthScreen() {
   const { loadError, login, register } = useAppState()
-  const [activeTab, setActiveTab] = useState('login')
+  const [activeView, setActiveView] = useState('onboarding')
   const [activeSlide, setActiveSlide] = useState(0)
   const [loginForm, setLoginForm] = useState(INITIAL_LOGIN_FORM)
   const [registerForm, setRegisterForm] = useState(INITIAL_REGISTER_FORM)
   const [status, setStatus] = useState({ tone: '', message: '' })
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [touchStartX, setTouchStartX] = useState(null)
-
-  const currentSlide = ONBOARDING_SLIDES[activeSlide] ?? ONBOARDING_SLIDES[0]
 
   function goToSlide(nextIndex) {
     const normalizedIndex =
@@ -77,20 +88,14 @@ export function AuthScreen() {
     setActiveSlide(normalizedIndex)
   }
 
-  function handleSlideAction(tab) {
-    setActiveTab(tab)
+  function openForm(nextView) {
+    setActiveView(nextView)
     setStatus({ tone: '', message: '' })
   }
 
-  function handleSecondaryAction(slide) {
-    if (slide.secondaryAction === 'next') {
-      goToSlide(activeSlide + 1)
-      return
-    }
-
-    if (slide.secondaryTab) {
-      handleSlideAction(slide.secondaryTab)
-    }
+  function closeForm() {
+    setActiveView('onboarding')
+    setStatus({ tone: '', message: '' })
   }
 
   function handleTouchStart(event) {
@@ -184,128 +189,116 @@ export function AuthScreen() {
   }
 
   return (
-    <section className="auth-screen" aria-label="Acceso a GastroRank">
-      <article className="auth-card">
-        <div
-          className="auth-card__hero auth-hero"
+    <section className="auth-screen auth-flow" aria-label="Acceso a GastroRank">
+      {activeView === 'onboarding' ? (
+        <article
+          className="auth-flow__onboarding auth-flow__onboarding--full"
           onTouchStart={handleTouchStart}
           onTouchEnd={handleTouchEnd}
         >
-          <div className="auth-hero__topbar">
-            <span className="auth-card__brandline">GastroRank</span>
-            <div className="auth-hero__actions" aria-label="Controles del onboarding">
-              <button
-                className="auth-hero__nav"
-                type="button"
-                onClick={() => goToSlide(activeSlide - 1)}
-                aria-label="Ir a la diapositiva anterior"
+          <div className="auth-flow__phone-frame">
+            <header className="auth-flow__phone-topbar">
+              <span className="auth-flow__time">9:41</span>
+              <span className="auth-flow__status">●●●</span>
+            </header>
+
+            <div className="auth-flow__decor" aria-hidden="true">
+              <span>🍔</span>
+              <span>✦</span>
+              <span>🍣</span>
+              <span>⌁</span>
+              <span>🍕</span>
+              <span>○</span>
+            </div>
+
+            <div className="auth-flow__carousel">
+              <div
+                className="auth-flow__track"
+                style={{ transform: `translateX(-${activeSlide * 100}%)` }}
               >
-                ←
-              </button>
-              <button
-                className="auth-hero__nav"
-                type="button"
-                onClick={() => goToSlide(activeSlide + 1)}
-                aria-label="Ir a la diapositiva siguiente"
-              >
-                →
-              </button>
+                {ONBOARDING_SLIDES.map((slide, index) => (
+                  <section className="auth-flow__slide" key={slide.id}>
+                    <div className="auth-flow__slide-main">
+                      <div className="auth-flow__logo-badge" aria-hidden="true">
+                        {SLIDE_SYMBOLS[index] ?? 'G'}
+                      </div>
+                      <div className="auth-flow__copy">
+                        <span className="auth-flow__eyebrow">{slide.eyebrow}</span>
+                        <h1>{slide.title}</h1>
+                        <p>{slide.description}</p>
+                      </div>
+                    </div>
+
+                    <div className="auth-flow__tags" aria-label="Puntos destacados">
+                      {slide.highlights.map((highlight) => (
+                        <span className="auth-flow__tag" key={highlight}>
+                          {highlight}
+                        </span>
+                      ))}
+                    </div>
+
+                    <div className="auth-flow__slide-actions">
+                      <p className="auth-flow__prompt">{slide.accent}</p>
+                      <button
+                        className="auth-flow__slide-primary"
+                        type="button"
+                        onClick={() =>
+                          slide.primaryTab
+                            ? openForm(slide.primaryTab)
+                            : goToSlide(activeSlide + 1)
+                        }
+                      >
+                        {slide.primaryLabel}
+                      </button>
+                      <button
+                        className="auth-flow__slide-secondary"
+                        type="button"
+                        onClick={getSecondaryAction(slide, activeSlide, goToSlide, openForm)}
+                      >
+                        {slide.secondaryLabel}
+                      </button>
+                    </div>
+                  </section>
+                ))}
+              </div>
             </div>
+
+            <footer className="auth-flow__phone-footer">
+              <div className="auth-flow__dots" role="tablist" aria-label="Ventanas de onboarding">
+                {ONBOARDING_SLIDES.map((slide, index) => (
+                  <button
+                    key={slide.id}
+                    className={`auth-flow__dot${index === activeSlide ? ' auth-flow__dot--active' : ''}`}
+                    type="button"
+                    onClick={() => goToSlide(index)}
+                    aria-label={`Ir a la ventana ${index + 1}`}
+                    aria-selected={index === activeSlide}
+                  />
+                ))}
+              </div>
+            </footer>
           </div>
-
-          <div className="auth-hero__viewport">
-            <div
-              className="auth-hero__track"
-              style={{ transform: `translateX(-${activeSlide * 100}%)` }}
-            >
-              {ONBOARDING_SLIDES.map((slide) => (
-                <section className="auth-hero__slide" key={slide.id}>
-                  <div className="auth-hero__content">
-                    <span className="auth-hero__eyebrow">{slide.eyebrow}</span>
-                    <h1>{slide.title}</h1>
-                    <p>{slide.description}</p>
-                  </div>
-
-                  <div className="auth-hero__highlights" aria-label="Puntos destacados">
-                    {slide.highlights.map((highlight) => (
-                      <span className="auth-hero__chip" key={highlight}>
-                        {highlight}
-                      </span>
-                    ))}
-                  </div>
-
-                  <div className="auth-hero__cta">
-                    <span className="auth-hero__accent">{slide.accent}</span>
-                    <button
-                      className="auth-hero__primary"
-                      type="button"
-                      onClick={() => handleSlideAction(slide.primaryTab)}
-                    >
-                      {slide.primaryLabel}
-                    </button>
-                    <button
-                      className="auth-hero__secondary"
-                      type="button"
-                      onClick={() => handleSecondaryAction(slide)}
-                    >
-                      {slide.secondaryLabel}
-                    </button>
-                  </div>
-                </section>
-              ))}
-            </div>
-          </div>
-
-          <div className="auth-hero__footer">
-            <div className="auth-hero__dots" role="tablist" aria-label="Mensajes de acceso">
-              {ONBOARDING_SLIDES.map((slide, index) => (
-                <button
-                  key={slide.id}
-                  className={`auth-hero__dot${index === activeSlide ? ' auth-hero__dot--active' : ''}`}
-                  type="button"
-                  onClick={() => goToSlide(index)}
-                  aria-label={`Ir a ${slide.eyebrow}`}
-                  aria-selected={index === activeSlide}
-                />
-              ))}
-            </div>
-            <p className="auth-hero__hint">Desliza para ver las tres ventanas</p>
-          </div>
-        </div>
-        <div className="auth-card__panel">
-          <div className="auth-card__header">
-            <span className="auth-card__brand">G</span>
-            <h2>{activeTab === 'login' ? 'Vuelve a tu mesa' : 'Abre tu cuenta foodie'}</h2>
-            <p>
-              {activeTab === 'login'
-                ? 'Accede con usuario o correo para seguir puntuando, guardando y explorando.'
-                : 'Regístrate en menos de un minuto y empieza a aportar a la comunidad.'}
-            </p>
-          </div>
-
-          <div className="auth-card__slide-summary" aria-live="polite">
-            <strong>{currentSlide.eyebrow}</strong>
-            <span>{currentSlide.accent}</span>
-          </div>
-
-          <div className="auth-tabs" role="tablist" aria-label="Autenticación">
-            <button
-              className={`auth-tab${activeTab === 'login' ? ' auth-tab--active' : ''}`}
-              type="button"
-              onClick={() => setActiveTab('login')}
-            >
-              Iniciar sesión
+        </article>
+      ) : (
+        <article className="auth-flow__form-shell">
+          <div className="auth-flow__form-card">
+            <button className="auth-flow__back" type="button" onClick={closeForm}>
+              ← Volver
             </button>
-            <button
-              className={`auth-tab${activeTab === 'register' ? ' auth-tab--active' : ''}`}
-              type="button"
-              onClick={() => setActiveTab('register')}
-            >
-              Registrarse
-            </button>
-          </div>
 
-          {activeTab === 'login' ? (
+            <div className="auth-flow__form-header">
+              <span className="auth-flow__panel-mark">G</span>
+              <div>
+                <h2>{activeView === 'login' ? 'Iniciar sesión' : 'Crear cuenta'}</h2>
+                <p>
+                  {activeView === 'login'
+                    ? 'Accede con usuario o correo para seguir puntuando.'
+                    : 'Regístrate y empieza a guardar tus rankings.'}
+                </p>
+              </div>
+            </div>
+
+            {activeView === 'login' ? (
             <form className="form-stack" onSubmit={handleLoginSubmit}>
               <label className="field">
                 <span>Usuario o correo</span>
@@ -336,7 +329,7 @@ export function AuthScreen() {
                   }
                 />
               </label>
-              <button className="primary-button" type="submit" disabled={isSubmitting}>
+              <button className="primary-button auth-flow__submit" type="submit" disabled={isSubmitting}>
                 {isSubmitting ? 'Cargando...' : 'Iniciar sesión'}
               </button>
             </form>
@@ -385,7 +378,7 @@ export function AuthScreen() {
                   }
                 />
               </label>
-              <button className="primary-button" type="submit" disabled={isSubmitting}>
+              <button className="primary-button auth-flow__submit" type="submit" disabled={isSubmitting}>
                 {isSubmitting ? 'Cargando...' : 'Crear cuenta'}
               </button>
             </form>
@@ -404,8 +397,9 @@ export function AuthScreen() {
               <p>{loadError}</p>
             </div>
           ) : null}
-        </div>
-      </article>
+          </div>
+        </article>
+      )}
     </section>
   )
 }
