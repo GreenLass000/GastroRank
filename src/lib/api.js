@@ -133,6 +133,17 @@ export function fetchBootstrapData({ includeSocial = false } = {}) {
   )
 }
 
+export function searchUsers(query) {
+  return fetchJson(
+    `/api/users/search${buildQueryString({
+      q: query,
+    })}`,
+    {
+      timeoutMs: 15000,
+    },
+  )
+}
+
 export function authRegister(payload) {
   return requestJson('/api/auth/register', {
     method: 'POST',

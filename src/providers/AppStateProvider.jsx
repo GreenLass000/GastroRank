@@ -778,9 +778,21 @@ export function AppStateProvider({ children }) {
       throw new Error('La API no devolvió los follows.')
     }
 
+    const relatedUsers = [
+      ...(response.following ?? []).map((item) => item.user).filter(Boolean),
+      ...(response.followers ?? []).map((item) => item.user).filter(Boolean),
+      ...(response.mutuals ?? []).filter(Boolean),
+    ]
+
     setState((current) => ({
       ...current,
       follows: response.follows,
+      users: [
+        ...current.users.filter(
+          (user) => !relatedUsers.some((relatedUser) => relatedUser.id === user.id),
+        ),
+        ...relatedUsers,
+      ],
     }))
     setSocialLoadState((current) => ({ ...current, follows: true }))
 

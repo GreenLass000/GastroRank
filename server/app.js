@@ -822,6 +822,35 @@ function buildSharedGroupIdsByUser(groupMembers, currentUserId, candidateUserIds
   }, new Map())
 }
 
+function normalizeSearchText(value) {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .trim()
+}
+
+async function getVisibleDishEntriesForUser(currentUserId) {
+  const [dishEntries, groupMembers] = await Promise.all([
+    FETCH.dishEntries(),
+    FETCH.groupMembers(),
+  ])
+
+  const activeGroupIds = new Set(
+    groupMembers
+      .filter((member) => member.user_id === currentUserId && member.status === 'active')
+      .map((member) => member.group_id),
+  )
+
+  return dishEntries.filter((entry) => {
+    if (entry.created_by_user_id === currentUserId || entry.visibility === 'public') {
+      return true
+    }
+
+    return entry.visibility === 'group' && entry.group_id && activeGroupIds.has(entry.group_id)
+  })
+}
+
 function generateInviteCode() {
   return randomUUID().replaceAll('-', '').slice(0, 6).toUpperCase()
 }
@@ -1236,6 +1265,40 @@ async function getFollowState(userId) {
       id: f.follower_user_id,
     })),
     mutuals: mutualIds.map((id) => usersById.get(id)).filter(Boolean),
+  }
+}
+
+async function searchUsers(query, actorUserId) {
+  const normalizedQuery = normalizeSearchText(query)
+
+  if (!normalizedQuery) {
+    return { users: [] }
+  }
+
+  const [users, follows] = await Promise.all([FETCH.users(), FETCH.follows()])
+  ensureRecordExists(users, actorUserId, 'el usuario autenticado')
+  const followsByPair = new Set(
+    follows.map((follow) => `${follow.follower_user_id}:${follow.followed_user_id}`),
+  )
+
+  return {
+    users: users
+      .filter((user) => user.id !== actorUserId)
+      .filter((user) =>
+        normalizeSearchText(`${user.nombre} ${user.bio ?? ''}`).includes(normalizedQuery),
+      )
+      .slice(0, 20)
+      .map((user) => {
+        const isFollowing = followsByPair.has(`${actorUserId}:${user.id}`)
+        const followsYou = followsByPair.has(`${user.id}:${actorUserId}`)
+
+        return {
+          ...serializeUser(user),
+          isFollowing,
+          followsYou,
+          isMutual: isFollowing && followsYou,
+        }
+      }),
   }
 }
 
@@ -1955,7 +2018,7 @@ async function updateAchievement(achievementId, payload, actorUserId) {
   return updated
 }
 
-async function loadBootstrapData({ includeSocial = false } = {}) {
+async function loadBootstrapData({ currentUserId, includeSocial = false } = {}) {
   const [
     users,
     groups,
@@ -1975,6 +2038,34 @@ async function loadBootstrapData({ includeSocial = false } = {}) {
     FETCH.dishEntries(),
     FETCH.publicShareTokens(),
   ])
+
+  const visibleDishEntries = currentUserId
+    ? await getVisibleDishEntriesForUser(currentUserId)
+    : dishEntries.filter((entry) => entry.visibility === 'public')
+
+  const visibleEntryIds = new Set(visibleDishEntries.map((entry) => entry.id))
+  const visibleUserIds = new Set(
+    visibleDishEntries.map((entry) => entry.created_by_user_id).filter(Boolean),
+  )
+  const visibleGroupIds = new Set(
+    visibleDishEntries
+      .map((entry) => (entry.visibility === 'group' ? entry.group_id : null))
+      .filter(Boolean),
+  )
+  if (currentUserId) {
+    visibleUserIds.add(currentUserId)
+  }
+  const activeCurrentUserGroupIds = new Set(
+    groupMembers
+      .filter((member) => member.user_id === currentUserId && member.status === 'active')
+      .map((member) => member.group_id),
+  )
+  activeCurrentUserGroupIds.forEach((groupId) => visibleGroupIds.add(groupId))
+  groupMembers.forEach((member) => {
+    if (visibleGroupIds.has(member.group_id)) {
+      visibleUserIds.add(member.user_id)
+    }
+  })
 
   let follows = [],
     reactions = [],
@@ -2002,16 +2093,57 @@ async function loadBootstrapData({ includeSocial = false } = {}) {
       FETCH.recommendations(),
       FETCH.achievements(),
     ])
+
+    follows = currentUserId
+      ? follows.filter(
+          (follow) =>
+            follow.follower_user_id === currentUserId ||
+            follow.followed_user_id === currentUserId,
+        )
+      : []
+    reactions = reactions.filter((reaction) => visibleEntryIds.has(reaction.dish_entry_id))
+    comments = comments.filter((comment) => visibleEntryIds.has(comment.dish_entry_id))
+    inspirationLists = currentUserId
+      ? inspirationLists.filter((list) => list.user_id === currentUserId)
+      : []
+    const visibleListIds = new Set(inspirationLists.map((list) => list.id))
+    inspirationListItems = inspirationListItems.filter((item) => visibleListIds.has(item.list_id))
+    recommendations = currentUserId
+      ? recommendations.filter(
+          (recommendation) =>
+            recommendation.from_user_id === currentUserId ||
+            recommendation.to_user_id === currentUserId,
+        )
+      : []
+    achievements = currentUserId
+      ? achievements.filter((achievement) => achievement.user_id === currentUserId)
+      : []
+
+    follows.forEach((follow) => {
+      visibleUserIds.add(follow.follower_user_id)
+      visibleUserIds.add(follow.followed_user_id)
+    })
+    recommendations.forEach((recommendation) => {
+      visibleUserIds.add(recommendation.from_user_id)
+      visibleUserIds.add(recommendation.to_user_id)
+      visibleEntryIds.add(recommendation.dish_entry_id)
+    })
   }
 
   return {
-    users: users.map((user) => serializeUser(user)),
-    groups,
-    groupMembers,
+    users: users
+      .filter((user) => visibleUserIds.has(user.id))
+      .map((user) => serializeUser(user)),
+    groups: groups.filter(
+      (group) =>
+        visibleGroupIds.has(group.id) ||
+        (currentUserId && group.created_by_user_id === currentUserId),
+    ),
+    groupMembers: groupMembers.filter((member) => visibleGroupIds.has(member.group_id)),
     restaurants: parseRestaurantRows(restaurants),
     categories,
     dishTypes,
-    dishEntries,
+    dishEntries: visibleDishEntries,
     publicShareTokens,
     follows,
     reactions,
@@ -2117,7 +2249,25 @@ async function handleRoute(url, response, authUser = null) {
     const includeSocial =
       searchParams.get('include_social') === '1' ||
       searchParams.get('includeSocial') === '1'
-    return sendJson(response, 200, await loadBootstrapData({ includeSocial }))
+    return sendJson(
+      response,
+      200,
+      await loadBootstrapData({
+        currentUserId: authUser ? getAuthenticatedUserId(authUser) : '',
+        includeSocial,
+      }),
+    )
+  }
+
+  if (pathname === '/api/users/search') {
+    return sendJson(
+      response,
+      200,
+      await searchUsers(
+        searchParams.get('q') ?? '',
+        getAuthenticatedUserId(authUser),
+      ),
+    )
   }
 
   if (pathname.startsWith('/api/public-share/')) {
@@ -2178,6 +2328,27 @@ async function handleRoute(url, response, authUser = null) {
   const routeKey = pathname.replace('/api/', '')
 
   if (routeKey in FETCH) {
+    const blockedGenericReads = new Set([
+      'users',
+      'groups',
+      'groupMembers',
+      'dishEntries',
+      'publicShareTokens',
+      'follows',
+      'reactions',
+      'comments',
+      'inspirationLists',
+      'inspirationListItems',
+      'recommendations',
+      'achievements',
+    ])
+
+    if (blockedGenericReads.has(routeKey)) {
+      return sendJson(response, 403, {
+        error: 'Ruta no disponible. Usa los endpoints específicos con control de acceso.',
+      })
+    }
+
     const rows = await FETCH[routeKey]()
     const payload =
       routeKey === 'restaurants'
@@ -2199,7 +2370,6 @@ function isPublicRoute(pathname) {
   return (
     pathname.startsWith('/uploads/') ||
     pathname === '/api/health' ||
-    pathname === '/api/bootstrap' ||
     pathname === '/api/auth/register' ||
     pathname === '/api/auth/login' ||
     pathname === '/api/auth/logout' ||
