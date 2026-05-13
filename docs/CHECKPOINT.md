@@ -1,7 +1,7 @@
 # CHECKPOINT
 
 ## Fecha
-- 2026-05-10
+- 2026-05-13
 
 ## Estado actual
 El repo ya no está en espera.
@@ -25,6 +25,18 @@ Base ya existente que se debe preservar mientras avanza el bloque:
 - uploads reales de imágenes implementados
 - paginación real del feed implementada
 - `Inicio`, `Rankings`, `Mapa`, `Comunidad` y `Perfil` ya funcionales, aunque con deuda estructural y UX pendiente
+
+Cambios recientes ya aplicados:
+
+- rediseño fuerte de `AuthScreen` con onboarding/carrusel y formularios separados
+- la pantalla de login ya no hereda el layout con scroll de la app autenticada
+- el login ahora respeta el tema activo real de la app
+- hotfix importante de privacidad/social:
+  - `/api/bootstrap` ya no es pública
+  - el bootstrap ya no entrega todas las valoraciones ni todos los datos sociales sin filtrar
+  - se bloquearon lecturas genéricas sensibles en backend
+  - se añadió búsqueda segura de usuarios en `/api/users/search`
+  - `GlobalSearchPanel` ya busca usuarios reales y permite seguir/dejar de seguir
 
 ## Estado de continuidad
 Sí hay una fase activa.
@@ -55,6 +67,12 @@ El siguiente paso natural es:
 - cerrar `Fase 0. Continuidad documental` si queda algo pendiente
 - empezar `Fase 1. Estabilidad inmediata`
 
+Antes de volver al refactor planificado conviene validar manualmente:
+
+- que un usuario no ve listas ni valoraciones privadas ajenas
+- que `Buscar amigos` devuelve usuarios y permite seguir/dejar de seguir
+- que `Comunidad`, `Perfil`, seguidores, seguidos y recomendaciones siguen funcionando tras el recorte de bootstrap
+
 ## Archivos de referencia
 - `AGENTS.md`
 - `TODO.md`
@@ -66,6 +84,8 @@ El siguiente paso natural es:
 - `server/app.js`
 - `src/providers/AppStateProvider.jsx`
 - `src/App.jsx`
+- `src/screens/AuthScreen.jsx`
+- `src/components/search/GlobalSearchPanel.jsx`
 
 ## Nota
 Los anexos viejos siguen valiendo como detalle de ejecución, pero la prioridad y el orden oficial están ahora en:
