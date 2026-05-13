@@ -196,12 +196,7 @@ export function AuthScreen() {
           onTouchStart={handleTouchStart}
           onTouchEnd={handleTouchEnd}
         >
-          <div className="auth-flow__phone-frame">
-            <header className="auth-flow__phone-topbar">
-              <span className="auth-flow__time">9:41</span>
-              <span className="auth-flow__status">●●●</span>
-            </header>
-
+          <div className="auth-flow__stage">
             <div className="auth-flow__decor" aria-hidden="true">
               <span>🍔</span>
               <span>✦</span>
