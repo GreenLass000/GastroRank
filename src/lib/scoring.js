@@ -16,7 +16,9 @@ export function calculateGeneralScore(entry) {
 
 export function calculateAverageScore(entries) {
   const validScores = entries
-    .map((entry) => Number(entry?.puntuacion_general))
+    .map((entry) => entry?.puntuacion_general)
+    .filter((score) => score !== null && score !== undefined)
+    .map((score) => Number(score))
     .filter((score) => Number.isFinite(score))
 
   if (validScores.length === 0) {

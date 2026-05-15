@@ -67,6 +67,10 @@
 }
 
 .community-card__content {
+  display: grid;
+}
+
+.community-card__open {
   width: 100%;
   border: 0;
   background: transparent;
@@ -103,6 +107,7 @@
 
 .community-card__header,
 .community-card__author,
+.community-card__meta,
 .community-entry-modal__meta,
 .community-pagination,
 .community-comment-input__actions {
@@ -150,6 +155,20 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
+}
+
+.community-card__actions {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0 0.95rem 0.95rem;
+}
+
+.community-card__meta {
+  border: 0;
+  border-top: 1px solid rgba(123, 45, 139, 0.08);
+  background: transparent;
+  padding: 0.75rem 0 0;
+  color: #5f6472;
 }
 
 .community-reaction-chip {
@@ -219,6 +238,35 @@
   padding: 0.85rem 0.95rem;
   border-radius: 1rem;
   background: #f8f9fa;
+}
+
+.community-comment__header,
+.community-comment__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.community-comment__editor,
+.community-comment__confirm {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.55rem;
+}
+
+.community-comment__editor textarea {
+  width: 100%;
+  border-radius: 0.9rem;
+  border: 1px solid rgba(123, 45, 139, 0.18);
+  padding: 0.8rem 0.9rem;
+  font: inherit;
+  resize: vertical;
+}
+
+.community-comment__error {
+  margin: 0;
+  color: #e74c3c;
 }
 
 .community-comment-input {

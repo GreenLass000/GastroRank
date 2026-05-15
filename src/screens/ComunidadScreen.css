@@ -1,3 +1,75 @@
+.community-screen__hub,
+.community-screen__social-list,
+.community-screen__group-list,
+.community-screen__group-form {
+  display: grid;
+  gap: 1rem;
+}
+
+.community-screen__hub {
+  margin-bottom: 1rem;
+}
+
+.community-screen__social-card,
+.community-screen__group-item {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.community-screen__social-item,
+.community-screen__group-head,
+.community-screen__group-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.community-screen__social-item,
+.community-screen__group-item {
+  padding: 0.9rem 1rem;
+  border: 1px solid rgba(123, 45, 139, 0.12);
+  border-radius: 1rem;
+  background: rgba(248, 249, 250, 0.85);
+}
+
+.community-screen__social-item p,
+.community-screen__group-item p {
+  margin: 0.15rem 0 0;
+  color: #5f6472;
+}
+
+.community-screen__join-group {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.community-screen__join-group .primary-button {
+  width: 100%;
+}
+
+.community-screen__inline-status {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.community-screen__inline-status--success {
+  color: #2ecc71;
+}
+
+.community-screen__inline-status--error {
+  color: #e74c3c;
+}
+
+@media (max-width: 640px) {
+  .community-screen__social-item,
+  .community-screen__group-head,
+  .community-screen__group-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
 .community-filter-bar {
   display: grid;
   gap: 1rem;

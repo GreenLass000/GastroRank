@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useAppState } from '../../hooks/useAppState.js'
 import {
   formatDate,
@@ -53,9 +53,25 @@ function SectionList({ children, emptyDescription, hasItems, title }) {
   )
 }
 
+function normalizeTextValue(value) {
+  return String(value ?? '').trim().toLowerCase()
+}
+
 export function EntityDetailSheet({ target, onClose }) {
   const appState = useAppState()
   const [isEditing, setIsEditing] = useState(false)
+  const [memberStatus, setMemberStatus] = useState({ tone: '', message: '' })
+  const [memberActionId, setMemberActionId] = useState('')
+  const [candidateQuery, setCandidateQuery] = useState('')
+  const [transferTargetUserId, setTransferTargetUserId] = useState('')
+
+  useEffect(() => {
+    setIsEditing(false)
+    setMemberStatus({ tone: '', message: '' })
+    setMemberActionId('')
+    setCandidateQuery('')
+    setTransferTargetUserId('')
+  }, [target?.id, target?.type])
 
   const resolvedEntity = useMemo(() => {
     if (!target) {
@@ -300,6 +316,7 @@ export function EntityDetailSheet({ target, onClose }) {
       appState.categories.find((item) => item.id === resolvedEntity.categoria_id) ?? null
     const author =
       appState.users.find((item) => item.id === resolvedEntity.created_by_user_id) ?? null
+    const canEditEntry = resolvedEntity.created_by_user_id === appState.currentUser?.id
 
     return (
       <div className="detail-stack">
@@ -344,13 +361,15 @@ export function EntityDetailSheet({ target, onClose }) {
             <button className="pill-button" type="button" onClick={onClose}>
               Cerrar
             </button>
-            <button
-              className="primary-button"
-              type="button"
-              onClick={() => setIsEditing(true)}
-            >
-              Editar valoración
-            </button>
+            {canEditEntry ? (
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => setIsEditing(true)}
+              >
+                Editar valoración
+              </button>
+            ) : null}
           </div>
         </article>
       </div>
@@ -358,13 +377,166 @@ export function EntityDetailSheet({ target, onClose }) {
   }
 
   if (target.type === 'group') {
+    const currentUserId = appState.currentUser?.id ?? ''
     const members = appState.groupMembers
       .filter((member) => member.group_id === resolvedEntity.id)
       .map((member) => ({
         ...member,
+        user:
+          appState.users.find((user) => user.id === member.user_id) ?? null,
         userName:
           appState.users.find((user) => user.id === member.user_id)?.nombre ?? 'Usuario',
       }))
+    const currentMembership = members.find((member) => member.user_id === currentUserId) ?? null
+    const canManageGroup = ['owner', 'admin'].includes(currentMembership?.role ?? '')
+    const canTransferOwnership = currentMembership?.role === 'owner'
+    const activeMembers = members.filter((member) => member.status === 'active')
+    const pendingMembers = members.filter((member) => member.status === 'pending')
+    const relationLookup = new Set(
+      (appState.follows ?? []).map(
+        (follow) => `${follow.follower_user_id}:${follow.followed_user_id}`,
+      ),
+    )
+    const memberUserIds = new Set(members.map((member) => member.user_id))
+    const filteredCandidateUsers = appState.users
+      .filter((user) => !memberUserIds.has(user.id))
+      .filter((user) => {
+        const normalizedQuery = normalizeTextValue(candidateQuery)
+
+        if (!normalizedQuery) {
+          return true
+        }
+
+        return normalizeTextValue(`${user.nombre} ${user.bio ?? ''}`).includes(normalizedQuery)
+      })
+      .map((user) => {
+        const isFollowing = relationLookup.has(`${currentUserId}:${user.id}`)
+        const followsYou = relationLookup.has(`${user.id}:${currentUserId}`)
+        const rank = isFollowing && followsYou ? 0 : isFollowing ? 1 : followsYou ? 2 : 3
+
+        return {
+          ...user,
+          relationLabel: isFollowing && followsYou
+            ? 'Amistad mutua'
+            : isFollowing
+              ? 'Siguiendo'
+              : followsYou
+                ? 'Te sigue'
+                : 'Usuario de la comunidad',
+          relationRank: rank,
+        }
+      })
+      .sort(
+        (left, right) =>
+          left.relationRank - right.relationRank ||
+          left.nombre.localeCompare(right.nombre, 'es'),
+      )
+      .slice(0, 8)
+    const transferCandidates = activeMembers.filter((member) => member.user_id !== currentUserId)
+
+    async function handleUpdateMember(memberId, payload) {
+      try {
+        setMemberStatus({ tone: '', message: '' })
+        setMemberActionId(memberId)
+        await appState.updateGroupMember(resolvedEntity.id, memberId, payload)
+        setMemberStatus({ tone: 'success', message: 'Guardado ✅' })
+      } catch (error) {
+        setMemberStatus({
+          tone: 'error',
+          message:
+            error instanceof Error
+              ? error.message
+              : 'No se pudo actualizar el miembro.',
+        })
+      } finally {
+        setMemberActionId('')
+      }
+    }
+
+    async function handleRemoveMember(memberId) {
+      try {
+        setMemberStatus({ tone: '', message: '' })
+        setMemberActionId(memberId)
+        await appState.removeGroupMember(resolvedEntity.id, memberId)
+        setMemberStatus({ tone: 'success', message: 'Guardado ✅' })
+      } catch (error) {
+        setMemberStatus({
+          tone: 'error',
+          message:
+            error instanceof Error
+              ? error.message
+              : 'No se pudo quitar el miembro.',
+        })
+      } finally {
+        setMemberActionId('')
+      }
+    }
+
+    async function handleAddMember(userId) {
+      try {
+        setMemberStatus({ tone: '', message: '' })
+        setMemberActionId(`add:${userId}`)
+        await appState.addGroupMember(resolvedEntity.id, { user_id: userId })
+        setMemberStatus({ tone: 'success', message: 'Guardado ✅' })
+      } catch (error) {
+        setMemberStatus({
+          tone: 'error',
+          message:
+            error instanceof Error
+              ? error.message
+              : 'No se pudo añadir la persona al grupo.',
+        })
+      } finally {
+        setMemberActionId('')
+      }
+    }
+
+    async function handleLeaveGroup() {
+      try {
+        setMemberStatus({ tone: '', message: '' })
+        setMemberActionId('leave')
+        await appState.leaveGroup(resolvedEntity.id)
+        onClose?.()
+      } catch (error) {
+        setMemberStatus({
+          tone: 'error',
+          message:
+            error instanceof Error
+              ? error.message
+              : 'No se pudo salir del grupo.',
+        })
+      } finally {
+        setMemberActionId('')
+      }
+    }
+
+    async function handleTransferOwnership() {
+      if (!transferTargetUserId) {
+        setMemberStatus({
+          tone: 'error',
+          message: 'Selecciona antes a la persona que recibirá el ownership.',
+        })
+        return
+      }
+
+      try {
+        setMemberStatus({ tone: '', message: '' })
+        setMemberActionId('transfer')
+        await appState.transferGroupOwnership(resolvedEntity.id, transferTargetUserId)
+        setTransferTargetUserId('')
+        setMemberStatus({ tone: 'success', message: 'Guardado ✅' })
+      } catch (error) {
+        setMemberStatus({
+          tone: 'error',
+          message:
+            error instanceof Error
+              ? error.message
+              : 'No se pudo transferir el ownership.',
+        })
+      } finally {
+        setMemberActionId('')
+      }
+    }
 
     return (
       <div className="detail-stack">
@@ -377,35 +549,207 @@ export function EntityDetailSheet({ target, onClose }) {
           <div className="detail-grid">
             <span className="status-pill">Código {resolvedEntity.invite_code}</span>
             <span className="status-pill">Creado {formatDate(resolvedEntity.created_at)}</span>
+            <span className="status-pill">{activeMembers.length} activos</span>
+            {pendingMembers.length > 0 ? (
+              <span className="status-pill">{pendingMembers.length} pendientes</span>
+            ) : null}
           </div>
+          {memberStatus.message ? (
+            <p className={`detail-note detail-note--${memberStatus.tone || 'info'}`}>
+              {memberStatus.message}
+            </p>
+          ) : null}
           <div className="modal-actions">
             <button className="pill-button" type="button" onClick={onClose}>
               Cerrar
             </button>
-            <button
-              className="primary-button"
-              type="button"
-              onClick={() => setIsEditing(true)}
-            >
-              Editar grupo
-            </button>
+            {canManageGroup ? (
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => setIsEditing(true)}
+              >
+                Editar grupo
+              </button>
+            ) : null}
+            {currentMembership && currentMembership.role !== 'owner' ? (
+              <button
+                className="pill-button"
+                type="button"
+                disabled={memberActionId === 'leave'}
+                onClick={handleLeaveGroup}
+              >
+                {memberActionId === 'leave'
+                  ? 'Guardando...'
+                  : currentMembership.status === 'pending'
+                    ? 'Cancelar solicitud'
+                    : 'Salir del grupo'}
+              </button>
+            ) : null}
           </div>
+          {currentMembership?.role === 'owner' ? (
+            <p className="detail-note">
+              Transfiere antes el ownership si quieres salir del grupo.
+            </p>
+          ) : null}
         </article>
 
+        {canTransferOwnership ? (
+          <article className="surface-card">
+            <div className="section-header">
+              <h2>Transferir ownership</h2>
+            </div>
+            <div className="detail-inline-form">
+              <label className="field">
+                <span>Nueva persona owner</span>
+                <select
+                  value={transferTargetUserId}
+                  onChange={(event) => setTransferTargetUserId(event.target.value)}
+                >
+                  <option value="">Selecciona una persona activa</option>
+                  {transferCandidates.map((member) => (
+                    <option key={member.id} value={member.user_id}>
+                      {member.userName} · {member.role}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="modal-actions">
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={memberActionId === 'transfer' || transferCandidates.length === 0}
+                  onClick={handleTransferOwnership}
+                >
+                  {memberActionId === 'transfer'
+                    ? 'Guardando...'
+                    : 'Transferir ownership'}
+                </button>
+              </div>
+            </div>
+          </article>
+        ) : null}
+
+        {canManageGroup ? (
+          <article className="surface-card">
+            <div className="section-header">
+              <h2>Añadir personas</h2>
+            </div>
+            <div className="detail-inline-form">
+              <label className="field">
+                <span>Buscar en comunidad</span>
+                <input
+                  type="search"
+                  value={candidateQuery}
+                  onChange={(event) => setCandidateQuery(event.target.value)}
+                  placeholder="Nombre o bio..."
+                />
+              </label>
+              {filteredCandidateUsers.length > 0 ? (
+                <div className="list-stack">
+                  {filteredCandidateUsers.map((user) => (
+                    <article key={user.id} className="list-card">
+                      <div className="detail-member-card__meta">
+                        <div>
+                          <strong>{user.nombre}</strong>
+                          <p>{user.bio || user.relationLabel}</p>
+                        </div>
+                        <button
+                          className="pill-button"
+                          type="button"
+                          disabled={memberActionId === `add:${user.id}`}
+                          onClick={() => handleAddMember(user.id)}
+                        >
+                          {memberActionId === `add:${user.id}` ? 'Guardando...' : 'Añadir'}
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="detail-note">
+                  No hay personas disponibles con esa búsqueda.
+                </p>
+              )}
+            </div>
+          </article>
+        ) : null}
+
         <SectionList
-          title="Miembros"
+          title="Miembros activos"
           emptyDescription="No hay miembros visibles en este grupo."
-          hasItems={members.length > 0}
+          hasItems={activeMembers.length > 0}
         >
-          {members.map((member) => (
+          {activeMembers.map((member) => (
             <article key={member.id} className="list-card">
               <strong>{member.userName}</strong>
               <p>
                 {member.role} • {member.status}
               </p>
+              {canManageGroup && member.role !== 'owner' && member.user_id !== currentUserId ? (
+                <div className="modal-actions">
+                  <button
+                    className="pill-button"
+                    type="button"
+                    disabled={memberActionId === member.id}
+                    onClick={() =>
+                      handleUpdateMember(member.id, {
+                        role: member.role === 'admin' ? 'member' : 'admin',
+                      })
+                    }
+                  >
+                    {memberActionId === member.id
+                      ? 'Guardando...'
+                      : member.role === 'admin'
+                        ? 'Quitar admin'
+                        : 'Hacer admin'}
+                  </button>
+                  <button
+                    className="pill-button"
+                    type="button"
+                    disabled={memberActionId === member.id}
+                    onClick={() => handleRemoveMember(member.id)}
+                  >
+                    Quitar
+                  </button>
+                </div>
+              ) : null}
             </article>
           ))}
         </SectionList>
+
+        {canManageGroup ? (
+          <SectionList
+            title="Solicitudes pendientes"
+            emptyDescription="No hay solicitudes pendientes ahora mismo."
+            hasItems={pendingMembers.length > 0}
+          >
+            {pendingMembers.map((member) => (
+              <article key={member.id} className="list-card">
+                <strong>{member.userName}</strong>
+                <p>Solicitud pendiente</p>
+                <div className="modal-actions">
+                  <button
+                    className="pill-button"
+                    type="button"
+                    disabled={memberActionId === member.id}
+                    onClick={() => handleUpdateMember(member.id, { status: 'active' })}
+                  >
+                    {memberActionId === member.id ? 'Guardando...' : 'Aprobar'}
+                  </button>
+                  <button
+                    className="pill-button"
+                    type="button"
+                    disabled={memberActionId === member.id}
+                    onClick={() => handleRemoveMember(member.id)}
+                  >
+                    Rechazar
+                  </button>
+                </div>
+              </article>
+            ))}
+          </SectionList>
+        ) : null}
       </div>
     )
   }

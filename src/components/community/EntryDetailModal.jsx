@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { formatDate, formatRelativePrice, formatScore } from '../../lib/format.js'
 import { CommentInput } from './CommentInput.jsx'
 import { ReactionRow } from './ReactionRow.jsx'
@@ -13,10 +14,67 @@ export function EntryDetailModal({
   mutualFollows,
   onClose,
   onComment,
+  onDeleteComment,
   onOpenRestaurant,
   onReact,
   onSave,
+  onUpdateComment,
 }) {
+  const [editingCommentId, setEditingCommentId] = useState('')
+  const [commentDraft, setCommentDraft] = useState('')
+  const [deleteCommentId, setDeleteCommentId] = useState('')
+  const [commentActionError, setCommentActionError] = useState('')
+  const [isCommentActionLoading, setIsCommentActionLoading] = useState(false)
+
+  useEffect(() => {
+    setEditingCommentId('')
+    setCommentDraft('')
+    setDeleteCommentId('')
+    setCommentActionError('')
+    setIsCommentActionLoading(false)
+  }, [entry?.id])
+
+  async function handleSaveComment(comment) {
+    const trimmed = commentDraft.trim()
+
+    if (!trimmed) {
+      setCommentActionError('El comentario no puede quedar vacío.')
+      return
+    }
+
+    try {
+      setCommentActionError('')
+      setIsCommentActionLoading(true)
+      await onUpdateComment?.(comment.id, {
+        text: trimmed,
+        mentions: comment.mentions ?? [],
+      })
+      setEditingCommentId('')
+      setCommentDraft('')
+    } catch (error) {
+      setCommentActionError(
+        error instanceof Error ? error.message : 'No se pudo editar el comentario.',
+      )
+    } finally {
+      setIsCommentActionLoading(false)
+    }
+  }
+
+  async function handleDeleteComment(comment) {
+    try {
+      setCommentActionError('')
+      setIsCommentActionLoading(true)
+      await onDeleteComment?.(comment.id)
+      setDeleteCommentId('')
+    } catch (error) {
+      setCommentActionError(
+        error instanceof Error ? error.message : 'No se pudo borrar el comentario.',
+      )
+    } finally {
+      setIsCommentActionLoading(false)
+    }
+  }
+
   if (!entry) {
     return null
   }
@@ -87,11 +145,99 @@ export function EntryDetailModal({
 
           <div className="community-entry-modal__comments">
             <strong>Comentarios</strong>
+            {commentActionError ? (
+              <p className="community-comment__error">{commentActionError}</p>
+            ) : null}
             {comments.length > 0 ? (
               comments.map((comment) => (
                 <article key={comment.id} className="community-comment">
-                  <strong>{comment.user?.nombre ?? 'Usuario'}</strong>
-                  <p>{comment.text}</p>
+                  <div className="community-comment__header">
+                    <strong>{comment.user?.nombre ?? 'Usuario'}</strong>
+                    {comment.canEdit ? (
+                      <div className="community-comment__actions">
+                        <button
+                          className="pill-button"
+                          type="button"
+                          onClick={() => {
+                            setDeleteCommentId('')
+                            setCommentActionError('')
+                            setEditingCommentId(comment.id)
+                            setCommentDraft(comment.text)
+                          }}
+                        >
+                          Editar
+                        </button>
+                        <button
+                          className="pill-button"
+                          type="button"
+                          onClick={() => {
+                            setEditingCommentId('')
+                            setCommentDraft('')
+                            setCommentActionError('')
+                            setDeleteCommentId((current) =>
+                              current === comment.id ? '' : comment.id,
+                            )
+                          }}
+                        >
+                          Borrar
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                  {editingCommentId === comment.id ? (
+                    <div className="community-comment__editor">
+                      <textarea
+                        value={commentDraft}
+                        onChange={(event) => setCommentDraft(event.target.value)}
+                        rows="3"
+                      />
+                      <div className="community-comment__actions">
+                        <button
+                          className="pill-button"
+                          type="button"
+                          onClick={() => {
+                            setEditingCommentId('')
+                            setCommentDraft('')
+                            setCommentActionError('')
+                          }}
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          className="primary-button"
+                          type="button"
+                          disabled={isCommentActionLoading}
+                          onClick={() => handleSaveComment(comment)}
+                        >
+                          {isCommentActionLoading ? 'Guardando...' : 'Guardar'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p>{comment.text}</p>
+                  )}
+                  {deleteCommentId === comment.id ? (
+                    <div className="community-comment__confirm">
+                      <p>¿Seguro que quieres borrar este comentario?</p>
+                      <div className="community-comment__actions">
+                        <button
+                          className="pill-button"
+                          type="button"
+                          onClick={() => setDeleteCommentId('')}
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          className="primary-button"
+                          type="button"
+                          disabled={isCommentActionLoading}
+                          onClick={() => handleDeleteComment(comment)}
+                        >
+                          {isCommentActionLoading ? 'Guardando...' : 'Sí, borrar'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                 </article>
               ))
             ) : (

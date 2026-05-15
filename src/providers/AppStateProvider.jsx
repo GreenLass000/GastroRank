@@ -11,13 +11,16 @@ import {
   createComment as createCommentRequest,
   createDishEntry as createDishEntryRequest,
   createDishType as createDishTypeRequest,
+  deleteComment as deleteCommentRequest,
   createFollow as createFollowRequest,
   createGroup as createGroupRequest,
+  createGroupMember as createGroupMemberRequest,
   createInspirationList as createInspirationListRequest,
   createInspirationListItem as createInspirationListItemRequest,
   createReaction as createReactionRequest,
   createRecommendation as createRecommendationRequest,
   createRestaurant as createRestaurantRequest,
+  deleteGroupMember as deleteGroupMemberRequest,
   deleteFollow as deleteFollowRequest,
   deleteReaction as deleteReactionRequest,
   fetchAchievements as fetchAchievementsRequest,
@@ -26,11 +29,15 @@ import {
   fetchFollows as fetchFollowsRequest,
   fetchInspirationLists as fetchInspirationListsRequest,
   fetchRecommendations as fetchRecommendationsRequest,
+  joinGroupByInviteCode as joinGroupByInviteCodeRequest,
+  transferGroupOwnership as transferGroupOwnershipRequest,
+  updateComment as updateCommentRequest,
   updatePassword as updatePasswordRequest,
   updateCategory as updateCategoryRequest,
   updateAchievement as updateAchievementRequest,
   updateDishEntry as updateDishEntryRequest,
   updateDishType as updateDishTypeRequest,
+  updateGroupMember as updateGroupMemberRequest,
   updateGroup as updateGroupRequest,
   updateInspirationListItem as updateInspirationListItemRequest,
   updateRecommendation as updateRecommendationRequest,
@@ -459,6 +466,14 @@ function buildDerivedState(state, filters, filterOrigin, sessionUser = null) {
         member.status === 'active',
     ),
   )
+  const pendingGroupsForCurrentUser = state.groups.filter((group) =>
+    state.groupMembers.some(
+      (member) =>
+        member.group_id === group.id &&
+        member.user_id === currentUser.id &&
+        member.status === 'pending',
+    ),
+  )
   const currentGroup = groupsForCurrentUser[0] ?? state.groups[0] ?? null
   const currentUserEntries = state.dishEntries.filter(
     (entry) => entry.created_by_user_id === currentUser.id,
@@ -597,6 +612,7 @@ function buildDerivedState(state, filters, filterOrigin, sessionUser = null) {
     weeklyStreak,
     userLevel,
     groupsForCurrentUser,
+    pendingGroupsForCurrentUser,
     latestEntries,
     rankingContexts,
     filteredDishEntries,
@@ -878,6 +894,31 @@ export function AppStateProvider({ children }) {
     }))
     setToast({ message: 'Guardado ✅', tone: 'success' })
     return response
+  }
+
+  async function updateComment(commentId, payload) {
+    const response = await updateCommentRequest(commentId, payload)
+
+    if (!response?.comment) {
+      throw new Error('La API no devolvió el comentario actualizado.')
+    }
+
+    setState((current) => ({
+      ...current,
+      comments: replaceRecordById(current.comments, response.comment),
+    }))
+    setToast({ message: 'Guardado ✅', tone: 'success' })
+    return response
+  }
+
+  async function removeComment(commentId) {
+    await deleteCommentRequest(commentId)
+
+    setState((current) => ({
+      ...current,
+      comments: current.comments.filter((comment) => comment.id !== commentId),
+    }))
+    setToast({ message: 'Guardado ✅', tone: 'success' })
   }
 
   async function addReaction(payload) {
@@ -1267,6 +1308,116 @@ export function AppStateProvider({ children }) {
     return response
   }
 
+  async function joinGroupByInviteCode(inviteCode) {
+    const response = await joinGroupByInviteCodeRequest({
+      invite_code: inviteCode,
+    })
+
+    if (!response?.group || !response?.groupMember) {
+      throw new Error('La API no devolvió el alta al grupo correctamente.')
+    }
+
+    setState((current) => ({
+      ...current,
+      groups: current.groups.some((group) => group.id === response.group.id)
+        ? current.groups
+        : [...current.groups, response.group],
+      groupMembers: [
+        ...current.groupMembers.filter(
+          (member) => member.id !== response.groupMember.id,
+        ),
+        response.groupMember,
+      ],
+    }))
+    setToast({ message: 'Guardado ✅', tone: 'success' })
+
+    return response
+  }
+
+  async function addGroupMember(groupId, payload) {
+    const response = await createGroupMemberRequest(groupId, payload)
+
+    if (!response?.group || !response?.groupMember) {
+      throw new Error('La API no devolvió el miembro de grupo.')
+    }
+
+    setState((current) => ({
+      ...current,
+      groups: current.groups.some((group) => group.id === response.group.id)
+        ? current.groups
+        : [...current.groups, response.group],
+      groupMembers: [
+        ...current.groupMembers.filter(
+          (member) => member.id !== response.groupMember.id,
+        ),
+        response.groupMember,
+      ],
+    }))
+    setToast({ message: 'Guardado ✅', tone: 'success' })
+
+    return response
+  }
+
+  async function updateGroupMember(groupId, memberId, payload) {
+    const response = await updateGroupMemberRequest(groupId, memberId, payload)
+
+    if (!response?.groupMember) {
+      throw new Error('La API no devolvió la actualización del miembro.')
+    }
+
+    setState((current) => ({
+      ...current,
+      groupMembers: replaceRecordById(current.groupMembers, response.groupMember),
+    }))
+    setToast({ message: 'Guardado ✅', tone: 'success' })
+
+    return response
+  }
+
+  async function removeGroupMember(groupId, memberId) {
+    await deleteGroupMemberRequest(groupId, memberId)
+
+    setState((current) => ({
+      ...current,
+      groupMembers: current.groupMembers.filter((member) => member.id !== memberId),
+    }))
+    setToast({ message: 'Guardado ✅', tone: 'success' })
+  }
+
+  async function leaveGroup(groupId) {
+    const membership = state.groupMembers.find(
+      (member) =>
+        member.group_id === groupId &&
+        member.user_id === derivedState.currentUser.id &&
+        ['active', 'pending'].includes(member.status),
+    )
+
+    if (!membership) {
+      throw new Error('No perteneces a ese grupo.')
+    }
+
+    await removeGroupMember(groupId, membership.id)
+  }
+
+  async function transferGroupOwnership(groupId, userId) {
+    const response = await transferGroupOwnershipRequest(groupId, { user_id: userId })
+
+    if (!Array.isArray(response?.members) || response.members.length === 0) {
+      throw new Error('La API no devolvió la transferencia del grupo.')
+    }
+
+    setState((current) => ({
+      ...current,
+      groupMembers: current.groupMembers.map((member) => {
+        const updatedMember = response.members.find((item) => item.id === member.id)
+        return updatedMember ?? member
+      }),
+    }))
+    setToast({ message: 'Guardado ✅', tone: 'success' })
+
+    return response
+  }
+
   async function createCategory(payload) {
     const response = await createCategoryRequest(payload)
 
@@ -1639,6 +1790,8 @@ export function AppStateProvider({ children }) {
         getMutualFollows,
         loadComments,
         addComment,
+        updateComment,
+        removeComment,
         addReaction,
         removeReaction,
         loadInspirationLists,
@@ -1657,6 +1810,12 @@ export function AppStateProvider({ children }) {
         updateRestaurant,
         createGroup,
         updateGroup,
+        joinGroupByInviteCode,
+        addGroupMember,
+        updateGroupMember,
+        removeGroupMember,
+        leaveGroup,
+        transferGroupOwnership,
         createCategory,
         updateCategory,
         createDishType,

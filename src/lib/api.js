@@ -270,6 +270,21 @@ export function createComment(payload) {
   })
 }
 
+export function updateComment(commentId, payload) {
+  return requestJson(`/api/comments/${encodeURIComponent(commentId)}`, {
+    method: 'PUT',
+    body: payload,
+    timeoutMs: 15000,
+  })
+}
+
+export function deleteComment(commentId) {
+  return requestJson(`/api/comments/${encodeURIComponent(commentId)}`, {
+    method: 'DELETE',
+    timeoutMs: 15000,
+  })
+}
+
 export function fetchInspirationLists({ userId, currentUserId, viewerUserId } = {}) {
   return fetchJson(
     `/api/inspiration-lists${buildQueryString({
@@ -395,6 +410,54 @@ export function updateGroup(groupId, payload) {
     body: payload,
     timeoutMs: 15000,
   })
+}
+
+export function joinGroupByInviteCode(payload) {
+  return requestJson('/api/groups/join', {
+    method: 'POST',
+    body: payload,
+    timeoutMs: 15000,
+  })
+}
+
+export function createGroupMember(groupId, payload) {
+  return requestJson(`/api/groups/${encodeURIComponent(groupId)}/members`, {
+    method: 'POST',
+    body: payload,
+    timeoutMs: 15000,
+  })
+}
+
+export function updateGroupMember(groupId, memberId, payload) {
+  return requestJson(
+    `/api/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(memberId)}`,
+    {
+      method: 'PUT',
+      body: payload,
+      timeoutMs: 15000,
+    },
+  )
+}
+
+export function deleteGroupMember(groupId, memberId) {
+  return requestJson(
+    `/api/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(memberId)}`,
+    {
+      method: 'DELETE',
+      timeoutMs: 15000,
+    },
+  )
+}
+
+export function transferGroupOwnership(groupId, payload) {
+  return requestJson(
+    `/api/groups/${encodeURIComponent(groupId)}/transfer-ownership`,
+    {
+      method: 'POST',
+      body: payload,
+      timeoutMs: 15000,
+    },
+  )
 }
 
 export function createPublicShareToken(payload) {

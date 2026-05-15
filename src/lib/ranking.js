@@ -48,6 +48,23 @@ function getDishTypeLabel(dishType, fallbackName) {
   return dishType?.nombre ?? fallbackName ?? 'Plato'
 }
 
+function getRepresentativeEntry(entries) {
+  return [...entries].sort((left, right) => {
+    const leftScore = Number(left?.puntuacion_general)
+    const rightScore = Number(right?.puntuacion_general)
+    const normalizedLeftScore = Number.isFinite(leftScore) ? leftScore : Number.NEGATIVE_INFINITY
+    const normalizedRightScore = Number.isFinite(rightScore)
+      ? rightScore
+      : Number.NEGATIVE_INFINITY
+
+    if (normalizedRightScore !== normalizedLeftScore) {
+      return normalizedRightScore - normalizedLeftScore
+    }
+
+    return new Date(right.created_at) - new Date(left.created_at)
+  })[0] ?? null
+}
+
 function buildSimpleRestaurantRankings({
   categories,
   dishTypes,
@@ -65,7 +82,12 @@ function buildSimpleRestaurantRankings({
 
   return Object.entries(groupedEntries)
     .map(([restaurantId, group]) => {
-      const sample = group[0]
+      const sample = getRepresentativeEntry(group)
+
+      if (!sample) {
+        return null
+      }
+
       const category = categoryLookup[sample.categoria_id]
       const dishType = dishTypeLookup[sample.tipo_plato_id]
 
@@ -85,6 +107,7 @@ function buildSimpleRestaurantRankings({
         primaryLabel: restaurantLookup[restaurantId]?.nombre ?? 'Restaurante',
       }
     })
+    .filter(Boolean)
     .sort(sortRankings)
 }
 

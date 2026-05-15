@@ -8,6 +8,7 @@ import { EntryDetailModal } from '../components/community/EntryDetailModal.jsx'
 import { FilterBar } from '../components/community/FilterBar.jsx'
 import { Pagination } from '../components/community/Pagination.jsx'
 import { ParaTiSection } from '../components/community/ParaTiSection.jsx'
+import { GroupForm } from '../components/forms/GroupForm.jsx'
 import { fetchCommunityFeed } from '../lib/api.js'
 import { useAppState } from '../hooks/useAppState.js'
 
@@ -77,9 +78,55 @@ function normalizeRecommendationItems({
     .slice(0, 5)
 }
 
+function buildSocialProfiles({ currentUserId, follows, users }) {
+  const followingIds = new Set(
+    follows
+      .filter((follow) => follow.follower_user_id === currentUserId)
+      .map((follow) => follow.followed_user_id),
+  )
+  const followerIds = new Set(
+    follows
+      .filter((follow) => follow.followed_user_id === currentUserId)
+      .map((follow) => follow.follower_user_id),
+  )
+
+  return users
+    .filter((user) => user.id !== currentUserId)
+    .filter((user) => followingIds.has(user.id) || followerIds.has(user.id))
+    .map((user) => {
+      const isFollowing = followingIds.has(user.id)
+      const followsYou = followerIds.has(user.id)
+      const isMutual = isFollowing && followsYou
+
+      return {
+        ...user,
+        followsYou,
+        isFollowing,
+        isMutual,
+        relationLabel: isMutual
+          ? 'Amistad mutua'
+          : isFollowing
+            ? 'Siguiendo'
+            : 'Te sigue',
+      }
+    })
+    .sort((left, right) => {
+      if (left.isMutual !== right.isMutual) {
+        return Number(right.isMutual) - Number(left.isMutual)
+      }
+
+      if (left.isFollowing !== right.isFollowing) {
+        return Number(right.isFollowing) - Number(left.isFollowing)
+      }
+
+      return left.nombre.localeCompare(right.nombre, 'es')
+    })
+}
+
 export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
   const {
     addComment,
+    addGroupMember,
     addReaction,
     categories,
     comments,
@@ -87,7 +134,12 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
     currentUser,
     dishEntries,
     dishTypes,
+    follows,
+    followUser,
+    groupMembers,
+    groupsForCurrentUser,
     inspirationLists,
+    joinGroupByInviteCode,
     loadComments,
     loadFollows,
     loadInspirationLists,
@@ -95,11 +147,15 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
     markRecommendationSeen,
     mutualFollows,
     recommendations,
+    removeComment,
     removeReaction,
     restaurants,
     saveToList,
     socialLoadState,
+    unfollowUser,
+    updateComment,
     users,
+    pendingGroupsForCurrentUser,
   } = useAppState()
   const [tab, setTab] = useState('amigos')
   const [page, setPage] = useState(1)
@@ -117,6 +173,14 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
   const [feedError, setFeedError] = useState('')
   const [socialLoadError, setSocialLoadError] = useState('')
   const [dismissedRecommendationIds, setDismissedRecommendationIds] = useState([])
+  const [pendingFriendId, setPendingFriendId] = useState('')
+  const [inviteCode, setInviteCode] = useState('')
+  const [inviteStatus, setInviteStatus] = useState({ tone: '', message: '' })
+  const [isJoiningGroup, setIsJoiningGroup] = useState(false)
+  const [isGroupFormOpen, setIsGroupFormOpen] = useState(false)
+  const [pendingGroupId, setPendingGroupId] = useState('')
+  const [selectedUserByGroupId, setSelectedUserByGroupId] = useState({})
+  const [groupStatusById, setGroupStatusById] = useState({})
   const hasActiveCommunityFilters = useMemo(
     () =>
       filters.categoryIds.length > 0 ||
@@ -139,6 +203,50 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
       }).filter((item) => !dismissedRecommendationIds.includes(item.id)),
     [currentUser, dismissedRecommendationIds, dishEntries, dishTypes, recommendations, restaurants, users],
   )
+  const socialProfiles = useMemo(
+    () =>
+      buildSocialProfiles({
+        currentUserId: currentUser.id,
+        follows,
+        users,
+      }),
+    [currentUser.id, follows, users],
+  )
+  const groupMembersByGroupId = useMemo(
+    () =>
+      groupMembers.reduce((acc, member) => {
+        acc[member.group_id] ??= []
+        acc[member.group_id].push(member)
+        return acc
+      }, {}),
+    [groupMembers],
+  )
+  const manageableGroups = useMemo(
+    () =>
+      groupsForCurrentUser.filter((group) => {
+        const currentMembership = groupMembers.find(
+          (member) =>
+            member.group_id === group.id &&
+            member.user_id === currentUser.id &&
+            member.status === 'active',
+        )
+
+        return ['owner', 'admin'].includes(currentMembership?.role ?? '')
+      }),
+    [currentUser.id, groupMembers, groupsForCurrentUser],
+  )
+  const candidateUsersByGroupId = useMemo(() => {
+    return manageableGroups.reduce((acc, group) => {
+      const memberIds = new Set(
+        (groupMembersByGroupId[group.id] ?? [])
+          .filter((member) => member.status === 'active')
+          .map((member) => member.user_id),
+      )
+
+      acc[group.id] = socialProfiles.filter((user) => !memberIds.has(user.id))
+      return acc
+    }, {})
+  }, [groupMembersByGroupId, manageableGroups, socialProfiles])
 
   useEffect(() => {
     let cancelled = false
@@ -345,18 +453,326 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
     await loadComments(selectedEntry.id)
   }
 
+  async function handleToggleFollow(user) {
+    try {
+      setPendingFriendId(user.id)
+
+      if (user.isFollowing) {
+        await unfollowUser(user.id)
+        return
+      }
+
+      await followUser(user.id)
+    } finally {
+      setPendingFriendId('')
+    }
+  }
+
+  async function handleJoinGroup(event) {
+    event.preventDefault()
+    setInviteStatus({ tone: '', message: '' })
+
+    try {
+      setIsJoiningGroup(true)
+      const response = await joinGroupByInviteCode(inviteCode)
+      setInviteCode('')
+      setInviteStatus({
+        tone: 'success',
+        message:
+          response.groupMember?.status === 'pending'
+            ? 'Solicitud enviada ✅'
+            : 'Guardado ✅',
+      })
+    } catch (error) {
+      setInviteStatus({
+        tone: 'error',
+        message:
+          error instanceof Error
+            ? error.message
+            : 'No se pudo entrar en el grupo.',
+      })
+    } finally {
+      setIsJoiningGroup(false)
+    }
+  }
+
+  async function handleAddMember(groupId) {
+    const targetUserId = selectedUserByGroupId[groupId]
+
+    if (!targetUserId) {
+      setGroupStatusById((current) => ({
+        ...current,
+        [groupId]: {
+          tone: 'error',
+          message: 'Selecciona antes a la persona que quieres añadir.',
+        },
+      }))
+      return
+    }
+
+    try {
+      setPendingGroupId(groupId)
+      await addGroupMember(groupId, { user_id: targetUserId })
+      setSelectedUserByGroupId((current) => ({
+        ...current,
+        [groupId]: '',
+      }))
+      setGroupStatusById((current) => ({
+        ...current,
+        [groupId]: { tone: 'success', message: 'Guardado ✅' },
+      }))
+    } catch (error) {
+      setGroupStatusById((current) => ({
+        ...current,
+        [groupId]: {
+          tone: 'error',
+          message:
+            error instanceof Error
+              ? error.message
+              : 'No se pudo añadir la persona al grupo.',
+        },
+      }))
+    } finally {
+      setPendingGroupId('')
+    }
+  }
+
   async function handleOpenRecommendation(item) {
     await markRecommendationSeen(item.id)
     setDismissedRecommendationIds((current) => [...current, item.id])
     setSelectedEntry(item.entry)
   }
 
+  async function handleEditComment(commentId, payload) {
+    await updateComment(commentId, payload)
+
+    if (selectedEntry?.id) {
+      await loadComments(selectedEntry.id)
+    }
+  }
+
+  async function handleDeleteComment(commentId) {
+    await removeComment(commentId)
+  }
+
   const selectedComments = selectedEntry
-    ? comments.filter((comment) => comment.dish_entry_id === selectedEntry.id)
+    ? comments
+        .filter((comment) => comment.dish_entry_id === selectedEntry.id)
+        .map((comment) => ({
+          ...comment,
+          canEdit: comment.user_id === currentUser.id,
+        }))
     : []
 
   return (
     <section className="screen screen--explore" aria-label="Pantalla de explorar">
+      <div className="community-screen__hub">
+        <article className="surface-card community-screen__social-card">
+          <div className="section-header">
+            <div>
+              <h2>Tu red</h2>
+              <p className="screen-note">
+                {socialProfiles.length > 0
+                  ? `${socialProfiles.filter((user) => user.isMutual).length} amistades mutuas activas`
+                  : 'Empieza siguiendo perfiles para mover la comunidad.'}
+              </p>
+            </div>
+            <button className="pill-button" type="button" onClick={onOpenSearch}>
+              Buscar amigos
+            </button>
+          </div>
+
+          {socialProfiles.length > 0 ? (
+            <div className="community-screen__social-list">
+              {socialProfiles.slice(0, 6).map((user) => (
+                <article key={user.id} className="community-screen__social-item">
+                  <div>
+                    <strong>{user.nombre}</strong>
+                    <p>{user.bio || user.relationLabel}</p>
+                  </div>
+                  <button
+                    className="pill-button"
+                    type="button"
+                    disabled={pendingFriendId === user.id}
+                    onClick={() => handleToggleFollow(user)}
+                  >
+                    {pendingFriendId === user.id
+                      ? 'Cargando...'
+                      : user.isFollowing
+                        ? 'Dejar de seguir'
+                        : 'Seguir'}
+                  </button>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <p className="community-empty-copy">
+              Aún no tienes conexiones activas. Usa Buscar amigos para empezar.
+            </p>
+          )}
+        </article>
+
+        <article className="surface-card community-screen__social-card">
+          <div className="section-header">
+            <div>
+              <h2>Grupos</h2>
+              <p className="screen-note">
+                {groupsForCurrentUser.length > 0
+                  ? `${groupsForCurrentUser.length} grupos activos`
+                  : 'Crea uno o entra con código.'}
+              </p>
+            </div>
+            <button
+              className="pill-button"
+              type="button"
+              onClick={() => setIsGroupFormOpen((current) => !current)}
+            >
+              {isGroupFormOpen ? 'Cerrar' : 'Crear grupo'}
+            </button>
+          </div>
+
+          {isGroupFormOpen ? (
+            <div className="community-screen__group-form">
+              <GroupForm
+                onCancel={() => setIsGroupFormOpen(false)}
+                onSaved={() => setIsGroupFormOpen(false)}
+              />
+            </div>
+          ) : null}
+
+          <form className="community-screen__join-group" onSubmit={handleJoinGroup}>
+            <label className="field">
+              <span>Entrar con código</span>
+              <input
+                type="text"
+                maxLength="6"
+                value={inviteCode}
+                onChange={(event) => setInviteCode(event.target.value.toUpperCase())}
+                placeholder="ABC123"
+              />
+            </label>
+            <button className="primary-button" type="submit" disabled={isJoiningGroup}>
+              {isJoiningGroup ? 'Cargando...' : 'Unirme'}
+            </button>
+          </form>
+
+          {inviteStatus.message ? (
+            <div className={`status-banner status-banner--${inviteStatus.tone || 'info'}`}>
+              <strong>{inviteStatus.tone === 'success' ? 'Estado' : 'Revisión'}</strong>
+              <p>{inviteStatus.message}</p>
+            </div>
+          ) : null}
+
+          {groupsForCurrentUser.length > 0 ? (
+            <div className="community-screen__group-list">
+              {groupsForCurrentUser.map((group) => {
+                const activeMembers = (groupMembersByGroupId[group.id] ?? []).filter(
+                  (member) => member.status === 'active',
+                )
+                const canManageGroup = manageableGroups.some(
+                  (manageableGroup) => manageableGroup.id === group.id,
+                )
+                const candidates = candidateUsersByGroupId[group.id] ?? []
+                const status = groupStatusById[group.id]
+
+                return (
+                  <article key={group.id} className="community-screen__group-item">
+                    <div className="community-screen__group-head">
+                      <div>
+                        <strong>{group.nombre}</strong>
+                        <p>
+                          {group.tipo} · {activeMembers.length} miembros · código{' '}
+                          <strong>{group.invite_code}</strong>
+                        </p>
+                      </div>
+                      <button
+                        className="pill-button"
+                        type="button"
+                        onClick={() => onOpenEntity?.({ type: 'group', id: group.id })}
+                      >
+                        Ver
+                      </button>
+                    </div>
+
+                    {canManageGroup ? (
+                      <div className="community-screen__group-actions">
+                        <label className="field">
+                          <span>Añadir persona</span>
+                          <select
+                            value={selectedUserByGroupId[group.id] ?? ''}
+                            onChange={(event) =>
+                              setSelectedUserByGroupId((current) => ({
+                                ...current,
+                                [group.id]: event.target.value,
+                              }))
+                            }
+                          >
+                            <option value="">Selecciona un contacto</option>
+                            {candidates.map((user) => (
+                              <option key={user.id} value={user.id}>
+                                {user.nombre} · {user.relationLabel}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <button
+                          className="primary-button"
+                          type="button"
+                          disabled={pendingGroupId === group.id || candidates.length === 0}
+                          onClick={() => handleAddMember(group.id)}
+                        >
+                          {pendingGroupId === group.id ? 'Guardando...' : 'Añadir'}
+                        </button>
+                      </div>
+                    ) : null}
+
+                    {canManageGroup && candidates.length === 0 ? (
+                      <p className="community-empty-copy">
+                        No tienes más contactos disponibles para añadir aquí ahora mismo.
+                      </p>
+                    ) : null}
+
+                    {status?.message ? (
+                      <p
+                        className={`community-screen__inline-status community-screen__inline-status--${status.tone}`}
+                      >
+                        {status.message}
+                      </p>
+                    ) : null}
+                  </article>
+                )
+              })}
+            </div>
+          ) : (
+            <p className="community-empty-copy">
+              Aún no perteneces a ningún grupo. Crea uno o usa un código de invitación.
+            </p>
+          )}
+
+          {pendingGroupsForCurrentUser.length > 0 ? (
+            <div className="community-screen__group-list">
+              {pendingGroupsForCurrentUser.map((group) => (
+                <article key={group.id} className="community-screen__group-item">
+                  <div className="community-screen__group-head">
+                    <div>
+                      <strong>{group.nombre}</strong>
+                      <p>{group.tipo} · solicitud pendiente de aprobación</p>
+                    </div>
+                    <button
+                      className="pill-button"
+                      type="button"
+                      onClick={() => onOpenEntity?.({ type: 'group', id: group.id })}
+                    >
+                      Ver
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : null}
+        </article>
+      </div>
+
       <div className="community-screen__subtabs">
         <button
           className={`community-screen__subtab${tab === 'explorar' ? ' community-screen__subtab--active' : ''}`}
@@ -426,6 +842,9 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
             <CommunityGrid
               entries={feedState.entries}
               onOpenEntry={setSelectedEntry}
+              onReactEntry={(entry) => {
+                setSelectedEntry(entry)
+              }}
               onSaveEntry={handleSaveEntry}
             />
           ) : (
@@ -444,6 +863,9 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
         <CommunityGrid
           entries={feedState.entries}
           onOpenEntry={setSelectedEntry}
+          onReactEntry={(entry) => {
+            setSelectedEntry(entry)
+          }}
           onSaveEntry={handleSaveEntry}
         />
       ) : (
@@ -477,12 +899,14 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
           mutualFollows={mutualFollows}
           onClose={() => setSelectedEntry(null)}
           onComment={handleComment}
+          onDeleteComment={handleDeleteComment}
           onOpenRestaurant={(restaurant) => {
             setSelectedEntry(null)
             onOpenEntity?.({ type: 'restaurant', id: restaurant.id })
           }}
           onReact={handleReact}
           onSave={handleSaveEntry}
+          onUpdateComment={handleEditComment}
         />
       ) : null}
     </section>

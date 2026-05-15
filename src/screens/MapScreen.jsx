@@ -238,12 +238,8 @@ export function MapScreen({ onCreateRestaurantAtLocation, onOpenEntity }) {
     [activeRadiusMeters, mapRestaurants, viewportState.center],
   )
   const restaurantsForMap = useMemo(
-    () =>
-      restaurantsWithinActiveRadius.map((restaurant) => ({
-        ...restaurant,
-        pinStyle: defaultPinStyle,
-      })),
-    [defaultPinStyle, restaurantsWithinActiveRadius],
+    () => restaurantsWithinActiveRadius,
+    [restaurantsWithinActiveRadius],
   )
   const visibleRestaurants = useMemo(
     () =>

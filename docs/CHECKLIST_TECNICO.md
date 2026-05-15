@@ -31,23 +31,23 @@
 ## Fase 1. Estabilidad inmediata
 
 ### `src/components/map/MapView.jsx`
-- [ ] La inicialización del mapa no depende de objetos de viewport inestables.
-- [ ] El mapa no se destruye y recrea al mover el viewport.
-- [ ] `invalidateSize()` solo corre cuando toca.
+- [x] La inicialización del mapa no depende de objetos de viewport inestables.
+- [x] El mapa no se destruye y recrea al mover el viewport.
+- [x] `invalidateSize()` solo corre cuando toca.
 
 ### `src/lib/scoring.js`
-- [ ] `calculateAverageScore` ignora `null`, `undefined` y valores no finitos.
-- [ ] `getScoreTone` devuelve tono neutral sin nota válida.
+- [x] `calculateAverageScore` ignora `null`, `undefined` y valores no finitos.
+- [x] `getScoreTone` devuelve tono neutral sin nota válida.
 
 ### `src/lib/ranking.js`
-- [ ] El ranking de restaurantes usa categorías y tipos reales en sus lookups.
+- [x] El ranking de restaurantes usa categorías y tipos reales en sus lookups.
 
 ### `src/screens/MapScreen.jsx`
-- [ ] El score medio de restaurante se calcula una sola vez por restaurante.
+- [x] El score medio de restaurante se calcula una sola vez por restaurante.
 
 ### Verificación
-- [ ] `npm run lint`
-- [ ] `npm run build`
+- [x] `npm run lint`
+- [x] `npm run build`
 - [ ] Prueba manual del mapa sin saltos ni reinicios al navegar
 
 ## Fase 2. Modularización base

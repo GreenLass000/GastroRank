@@ -37,6 +37,11 @@ Cambios recientes ya aplicados:
   - se bloquearon lecturas genéricas sensibles en backend
   - se añadió búsqueda segura de usuarios en `/api/users/search`
   - `GlobalSearchPanel` ya busca usuarios reales y permite seguir/dejar de seguir
+- avance técnico en `Fase 1. Estabilidad inmediata`:
+  - `calculateAverageScore` ya ignora `null`, `undefined` y valores no finitos
+  - `MapView` evita recentrados redundantes y el mini mapa prioriza el punto enfocado/seleccionado
+  - el ranking de restaurantes usa una entrada representativa real para categoría/tipo
+  - `MapScreen` deja de regenerar pins solo para sobrescribir el mismo `pinStyle`
 
 ## Estado de continuidad
 Sí hay una fase activa.
@@ -64,8 +69,8 @@ Si se retoma el trabajo en una sesión futura:
 
 ## Próximo paso por defecto
 El siguiente paso natural es:
-- cerrar `Fase 0. Continuidad documental` si queda algo pendiente
-- empezar `Fase 1. Estabilidad inmediata`
+- validar manualmente `Fase 1. Estabilidad inmediata` en la pantalla de mapa
+- si la prueba manual sale bien, marcar `Fase 1` como cerrada y continuar con `Fase 2`
 
 Antes de volver al refactor planificado conviene validar manualmente:
 

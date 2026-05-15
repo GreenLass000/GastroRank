@@ -216,6 +216,16 @@ function getViewportSnapshot(map) {
   }
 }
 
+function hasMeaningfulViewportChange(map, center, zoom) {
+  const currentCenter = map.getCenter()
+  const currentZoom = map.getZoom()
+  const targetZoom = Number.isFinite(zoom) ? Number(zoom) : currentZoom
+  const latDelta = Math.abs(currentCenter.lat - center.lat)
+  const lngDelta = Math.abs(currentCenter.lng - center.lng)
+
+  return latDelta > 0.00001 || lngDelta > 0.00001 || currentZoom !== targetZoom
+}
+
 export function MapView({
   center = null,
   children = null,
@@ -585,6 +595,10 @@ export function MapView({
     latestViewportRequestRef.current = requestKey
     const targetZoom = controlledZoom ?? map.getZoom()
 
+    if (!hasMeaningfulViewportChange(map, controlledCenter, targetZoom)) {
+      return
+    }
+
     if (viewportAnimation === 'fly') {
       map.flyTo([controlledCenter.lat, controlledCenter.lng], targetZoom, {
         duration: 0.45,
@@ -745,9 +759,11 @@ export function MapView({
     if (mode === 'mini') {
       if (draftMarker) {
         map.setView([Number(draftMarker.lat), Number(draftMarker.lng)], 15)
+      } else if (effectiveFocusMarker) {
+        map.setView([Number(effectiveFocusMarker.lat), Number(effectiveFocusMarker.lng)], 15)
       } else if (points.length === 1) {
         map.setView(points[0], 15)
-      } else {
+      } else if (!hasInitialFitRef.current) {
         map.fitBounds(points, {
           maxZoom: 15,
           padding: [18, 18],

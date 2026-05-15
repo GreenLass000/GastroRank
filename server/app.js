@@ -1127,9 +1127,8 @@ async function updateUser(userId, payload) {
   return serializeUser(updated, { includeEmail: true })
 }
 
-async function updateGroup(groupId, payload) {
-  const groups = await FETCH.groups()
-  const current = ensureRecordExists(groups, groupId, 'el grupo solicitado')
+async function updateGroup(groupId, payload, actorUserId) {
+  const { group: current } = await requireGroupManagementAccess(groupId, actorUserId)
   const p = validateGroupPayload({ ...current, ...payload, created_by_user_id: current.created_by_user_id })
 
   const [updated] = await db
@@ -1139,6 +1138,251 @@ async function updateGroup(groupId, payload) {
     .returning()
 
   return updated
+}
+
+async function requireGroupManagementAccess(groupId, actorUserId) {
+  const [groups, groupMembers] = await Promise.all([FETCH.groups(), FETCH.groupMembers()])
+  const group = ensureRecordExists(groups, groupId, 'el grupo solicitado')
+  const activeMembership = groupMembers.find(
+    (member) =>
+      member.group_id === groupId &&
+      member.user_id === actorUserId &&
+      member.status === 'active',
+  )
+
+  if (!activeMembership || !['owner', 'admin'].includes(activeMembership.role)) {
+    const error = new Error('No puedes gestionar un grupo del que no eres admin.')
+    error.statusCode = 403
+    throw error
+  }
+
+  return { group, groupMembers }
+}
+
+async function joinGroupByInviteCode(payload, actorUserId) {
+  const inviteCode = getRequiredString(payload.invite_code, 'el código de invitación').toUpperCase()
+  const [groups, groupMembers, users] = await Promise.all([
+    FETCH.groups(),
+    FETCH.groupMembers(),
+    FETCH.users(),
+  ])
+
+  ensureRecordExists(users, actorUserId, 'el usuario autenticado')
+  const group = groups.find((candidate) => candidate.invite_code === inviteCode)
+
+  if (!group) {
+    throw new Error('No existe ningún grupo con ese código.')
+  }
+
+  const existingMembership = groupMembers.find(
+    (member) => member.group_id === group.id && member.user_id === actorUserId,
+  )
+
+  if (existingMembership?.status === 'active') {
+    return { group, groupMember: existingMembership }
+  }
+
+  const nextStatus = group.join_policy === 'aprobación' ? 'pending' : 'active'
+
+  if (existingMembership) {
+    const [updatedMembership] = await db
+      .update(schema.groupMembers)
+      .set({
+        status: nextStatus,
+        joined_at: new Date().toISOString(),
+      })
+      .where(eq(schema.groupMembers.id, existingMembership.id))
+      .returning()
+
+    return {
+      group,
+      groupMember:
+        updatedMembership ?? { ...existingMembership, status: nextStatus },
+    }
+  }
+
+  const record = {
+    id: randomUUID(),
+    group_id: group.id,
+    user_id: actorUserId,
+    role: 'member',
+    status: nextStatus,
+    joined_at: new Date().toISOString(),
+  }
+
+  await db.insert(schema.groupMembers).values(record)
+  return { group, groupMember: record }
+}
+
+async function addGroupMember(groupId, payload, actorUserId) {
+  const targetUserId = getRequiredString(payload.user_id, 'el usuario a añadir')
+  const role = payload.role === 'admin' ? 'admin' : 'member'
+  const [{ group }, users, groupMembers] = await Promise.all([
+    requireGroupManagementAccess(groupId, actorUserId),
+    FETCH.users(),
+    FETCH.groupMembers(),
+  ])
+
+  ensureRecordExists(users, targetUserId, 'el usuario a añadir')
+
+  const existingMembership = groupMembers.find(
+    (member) => member.group_id === group.id && member.user_id === targetUserId,
+  )
+
+  if (existingMembership?.status === 'active') {
+    return { group, groupMember: existingMembership }
+  }
+
+  if (existingMembership) {
+    const [updatedMembership] = await db
+      .update(schema.groupMembers)
+      .set({
+        role,
+        status: 'active',
+        joined_at: new Date().toISOString(),
+      })
+      .where(eq(schema.groupMembers.id, existingMembership.id))
+      .returning()
+
+    return {
+      group,
+      groupMember: updatedMembership ?? {
+        ...existingMembership,
+        role,
+        status: 'active',
+      },
+    }
+  }
+
+  const record = {
+    id: randomUUID(),
+    group_id: group.id,
+    user_id: targetUserId,
+    role,
+    status: 'active',
+    joined_at: new Date().toISOString(),
+  }
+
+  await db.insert(schema.groupMembers).values(record)
+  return { group, groupMember: record }
+}
+
+async function updateGroupMember(groupId, memberId, payload, actorUserId) {
+  const [{ group }, groupMembers] = await Promise.all([
+    requireGroupManagementAccess(groupId, actorUserId),
+    FETCH.groupMembers(),
+  ])
+  const membership = groupMembers.find(
+    (member) => member.id === memberId && member.group_id === group.id,
+  )
+
+  if (!membership) {
+    throw new Error('No existe ese miembro en el grupo.')
+  }
+
+  if (membership.role === 'owner') {
+    const error = new Error('No puedes modificar el rol del owner.')
+    error.statusCode = 403
+    throw error
+  }
+
+  const nextRole = ['admin', 'member'].includes(payload.role) ? payload.role : membership.role
+  const nextStatus = ['active', 'pending'].includes(payload.status)
+    ? payload.status
+    : membership.status
+
+  const [updatedMembership] = await db
+    .update(schema.groupMembers)
+    .set({
+      role: nextRole,
+      status: nextStatus,
+    })
+    .where(eq(schema.groupMembers.id, membership.id))
+    .returning()
+
+  return { group, groupMember: updatedMembership ?? { ...membership, role: nextRole, status: nextStatus } }
+}
+
+async function removeGroupMember(groupId, memberId, actorUserId) {
+  const groupMembers = await FETCH.groupMembers()
+  const membership = groupMembers.find(
+    (member) => member.id === memberId && member.group_id === groupId,
+  )
+
+  if (!membership) {
+    throw new Error('No existe ese miembro en el grupo.')
+  }
+
+  const isSelfRemoval = membership.user_id === actorUserId
+
+  if (!isSelfRemoval) {
+    await requireGroupManagementAccess(groupId, actorUserId)
+  }
+
+  if (membership.role === 'owner') {
+    const error = new Error('No puedes expulsar al owner del grupo.')
+    error.statusCode = 403
+    throw error
+  }
+
+  await db.delete(schema.groupMembers).where(eq(schema.groupMembers.id, membership.id))
+  return { ok: true }
+}
+
+async function transferGroupOwnership(groupId, nextOwnerUserId, actorUserId) {
+  const [groups, groupMembers] = await Promise.all([FETCH.groups(), FETCH.groupMembers()])
+  const group = ensureRecordExists(groups, groupId, 'el grupo solicitado')
+  const currentOwnerMembership = groupMembers.find(
+    (member) =>
+      member.group_id === group.id &&
+      member.user_id === actorUserId &&
+      member.status === 'active',
+  )
+
+  if (currentOwnerMembership?.role !== 'owner') {
+    const error = new Error('Solo el owner actual puede transferir el grupo.')
+    error.statusCode = 403
+    throw error
+  }
+
+  const nextOwnerMembership = groupMembers.find(
+    (member) =>
+      member.group_id === group.id &&
+      member.user_id === nextOwnerUserId &&
+      member.status === 'active',
+  )
+
+  if (!nextOwnerMembership) {
+    throw new Error('La nueva persona owner debe ser miembro activo del grupo.')
+  }
+
+  if (nextOwnerMembership.user_id === actorUserId) {
+    throw new Error('Selecciona otra persona para transferir el ownership.')
+  }
+
+  const [updatedCurrentOwner, updatedNextOwner] = await db.transaction(async (tx) => {
+    const [currentOwner] = await tx
+      .update(schema.groupMembers)
+      .set({ role: 'admin' })
+      .where(eq(schema.groupMembers.id, currentOwnerMembership.id))
+      .returning()
+
+    const [nextOwner] = await tx
+      .update(schema.groupMembers)
+      .set({ role: 'owner' })
+      .where(eq(schema.groupMembers.id, nextOwnerMembership.id))
+      .returning()
+
+    return [currentOwner, nextOwner]
+  })
+
+  return {
+    group,
+    members: [
+      updatedCurrentOwner ?? { ...currentOwnerMembership, role: 'admin' },
+      updatedNextOwner ?? { ...nextOwnerMembership, role: 'owner' },
+    ],
+  }
 }
 
 async function updateRestaurant(restaurantId, payload) {
@@ -1207,9 +1451,16 @@ async function updateDishType(dishTypeId, payload) {
   return updated
 }
 
-async function updateDishEntry(dishEntryId, payload) {
+async function updateDishEntry(dishEntryId, payload, actorUserId) {
   const dishEntries = await FETCH.dishEntries()
   const current = ensureRecordExists(dishEntries, dishEntryId, 'la valoración solicitada')
+
+  if (current.created_by_user_id !== actorUserId) {
+    const error = new Error('No puedes editar una reseña creada por otro usuario.')
+    error.statusCode = 403
+    throw error
+  }
+
   const p = validateDishEntryPayload(
     { ...current, ...payload, created_by_user_id: current.created_by_user_id },
     dishEntries,
@@ -1711,6 +1962,53 @@ async function createComment(payload) {
   }
 }
 
+async function updateComment(commentId, payload, actorUserId) {
+  const comments = await FETCH.comments()
+  const current = ensureRecordExists(comments, commentId, 'el comentario solicitado')
+
+  if (current.user_id !== actorUserId) {
+    const error = new Error('No puedes editar comentarios de otro usuario.')
+    error.statusCode = 403
+    throw error
+  }
+
+  const text = getRequiredString(payload.text, 'el texto del comentario')
+  const mentions = sanitizeMentions(payload.mentions)
+
+  if (text.length > 500) {
+    throw new Error('El comentario no puede superar los 500 caracteres.')
+  }
+
+  const [updated, users] = await Promise.all([
+    db
+      .update(schema.comments)
+      .set({ text, mentions })
+      .where(eq(schema.comments.id, commentId))
+      .returning(),
+    FETCH.users(),
+  ])
+
+  return {
+    ...(updated[0] ?? { ...current, text, mentions }),
+    mentions,
+    user: serializeUser(ensureRecordExists(users, actorUserId, 'el usuario del comentario')),
+  }
+}
+
+async function deleteComment(commentId, actorUserId) {
+  const comments = await FETCH.comments()
+  const current = ensureRecordExists(comments, commentId, 'el comentario solicitado')
+
+  if (current.user_id !== actorUserId) {
+    const error = new Error('No puedes borrar comentarios de otro usuario.')
+    error.statusCode = 403
+    throw error
+  }
+
+  await db.delete(schema.comments).where(eq(schema.comments.id, commentId))
+  return { ok: true }
+}
+
 async function getInspirationLists(userId) {
   const [users, lists, items, dishEntries] = await Promise.all([
     FETCH.users(),
@@ -2060,6 +2358,11 @@ async function loadBootstrapData({ currentUserId, includeSocial = false } = {}) 
       .filter((member) => member.user_id === currentUserId && member.status === 'active')
       .map((member) => member.group_id),
   )
+  const pendingCurrentUserGroupIds = new Set(
+    groupMembers
+      .filter((member) => member.user_id === currentUserId && member.status === 'pending')
+      .map((member) => member.group_id),
+  )
   activeCurrentUserGroupIds.forEach((groupId) => visibleGroupIds.add(groupId))
   groupMembers.forEach((member) => {
     if (visibleGroupIds.has(member.group_id)) {
@@ -2137,9 +2440,14 @@ async function loadBootstrapData({ currentUserId, includeSocial = false } = {}) 
     groups: groups.filter(
       (group) =>
         visibleGroupIds.has(group.id) ||
+        pendingCurrentUserGroupIds.has(group.id) ||
         (currentUserId && group.created_by_user_id === currentUserId),
     ),
-    groupMembers: groupMembers.filter((member) => visibleGroupIds.has(member.group_id)),
+    groupMembers: groupMembers.filter(
+      (member) =>
+        visibleGroupIds.has(member.group_id) ||
+        (member.user_id === currentUserId && pendingCurrentUserGroupIds.has(member.group_id)),
+    ),
     restaurants: parseRestaurantRows(restaurants),
     categories,
     dishTypes,
@@ -2471,6 +2779,46 @@ const server = http.createServer(async (request, response) => {
       return
     }
 
+    if (request.method === 'POST' && url.pathname === '/api/groups/join') {
+      const body = await readJsonBody(request)
+      sendJson(response, 201, await joinGroupByInviteCode(body, getAuthenticatedUserId(authUser)))
+      return
+    }
+
+    if (
+      request.method === 'POST' &&
+      url.pathname.startsWith('/api/groups/') &&
+      url.pathname.endsWith('/members')
+    ) {
+      const body = await readJsonBody(request)
+      const groupId = decodeURIComponent(
+        url.pathname.replace('/api/groups/', '').replace('/members', ''),
+      )
+      sendJson(response, 201, await addGroupMember(groupId, body, getAuthenticatedUserId(authUser)))
+      return
+    }
+
+    if (
+      request.method === 'POST' &&
+      url.pathname.startsWith('/api/groups/') &&
+      url.pathname.endsWith('/transfer-ownership')
+    ) {
+      const body = await readJsonBody(request)
+      const groupId = decodeURIComponent(
+        url.pathname.replace('/api/groups/', '').replace('/transfer-ownership', ''),
+      )
+      sendJson(
+        response,
+        200,
+        await transferGroupOwnership(
+          groupId,
+          getRequiredString(body.user_id, 'la nueva persona owner'),
+          getAuthenticatedUserId(authUser),
+        ),
+      )
+      return
+    }
+
     if (request.method === 'POST' && url.pathname === '/api/categories') {
       const body = await readJsonBody(request)
       sendJson(response, 201, {
@@ -2602,9 +2950,27 @@ const server = http.createServer(async (request, response) => {
     }
 
     if (request.method === 'PUT' && url.pathname.startsWith('/api/groups/')) {
+      if (url.pathname.includes('/members/')) {
+        const body = await readJsonBody(request)
+        const groupId = decodeURIComponent(
+          url.pathname
+            .replace('/api/groups/', '')
+            .split('/members/')[0],
+        )
+        const memberId = decodeURIComponent(url.pathname.split('/members/')[1] ?? '')
+        sendJson(
+          response,
+          200,
+          await updateGroupMember(groupId, memberId, body, getAuthenticatedUserId(authUser)),
+        )
+        return
+      }
+
       const body = await readJsonBody(request)
       const groupId = decodeURIComponent(url.pathname.replace('/api/groups/', ''))
-      sendJson(response, 200, { group: await updateGroup(groupId, body) })
+      sendJson(response, 200, {
+        group: await updateGroup(groupId, body, getAuthenticatedUserId(authUser)),
+      })
       return
     }
 
@@ -2632,7 +2998,18 @@ const server = http.createServer(async (request, response) => {
     if (request.method === 'PUT' && url.pathname.startsWith('/api/dish-entries/')) {
       const body = await readJsonBody(request)
       const id = decodeURIComponent(url.pathname.replace('/api/dish-entries/', ''))
-      sendJson(response, 200, { dishEntry: await updateDishEntry(id, body) })
+      sendJson(response, 200, {
+        dishEntry: await updateDishEntry(id, body, getAuthenticatedUserId(authUser)),
+      })
+      return
+    }
+
+    if (request.method === 'PUT' && url.pathname.startsWith('/api/comments/')) {
+      const body = await readJsonBody(request)
+      const commentId = decodeURIComponent(url.pathname.replace('/api/comments/', ''))
+      sendJson(response, 200, {
+        comment: await updateComment(commentId, body, getAuthenticatedUserId(authUser)),
+      })
       return
     }
 
@@ -2696,6 +3073,35 @@ const server = http.createServer(async (request, response) => {
         response,
         200,
         await deleteReaction(reactionId, getAuthenticatedUserId(authUser)),
+      )
+      return
+    }
+
+    if (
+      request.method === 'DELETE' &&
+      url.pathname.startsWith('/api/groups/') &&
+      url.pathname.includes('/members/')
+    ) {
+      const groupId = decodeURIComponent(
+        url.pathname
+          .replace('/api/groups/', '')
+          .split('/members/')[0],
+      )
+      const memberId = decodeURIComponent(url.pathname.split('/members/')[1] ?? '')
+      sendJson(
+        response,
+        200,
+        await removeGroupMember(groupId, memberId, getAuthenticatedUserId(authUser)),
+      )
+      return
+    }
+
+    if (request.method === 'DELETE' && url.pathname.startsWith('/api/comments/')) {
+      const commentId = decodeURIComponent(url.pathname.replace('/api/comments/', ''))
+      sendJson(
+        response,
+        200,
+        await deleteComment(commentId, getAuthenticatedUserId(authUser)),
       )
       return
     }
