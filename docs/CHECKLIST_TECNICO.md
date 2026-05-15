@@ -3,13 +3,14 @@
 ## Uso
 - Este checklist ejecuta `docs/PLAN_FRONTEND_MAESTRO.md`.
 - Marcar cada bloque solo cuando el código, la verificación y la continuidad documental estén cerrados.
+- La ejecución actual admite trabajo en paralelo entre `Fase 1`, `Fase 2` y `Fase 3`, pero cada fase solo se cierra cuando su verificación queda completa.
 - No abrir una fase nueva sin revisar antes:
   - `docs/CHECKPOINT.md`
   - `docs/PLAN_FRONTEND_MAESTRO.md`
   - este archivo
 
 ## Estado global
-- [ ] Fase 0 cerrada
+- [x] Fase 0 cerrada
 - [ ] Fase 1 cerrada
 - [ ] Fase 2 cerrada
 - [ ] Fase 3 cerrada
@@ -22,11 +23,11 @@
 - [ ] Fase 10 cerrada
 
 ## Fase 0. Continuidad documental
-- [ ] `docs/PLAN_FRONTEND_MAESTRO.md` existe y es la referencia principal del bloque.
-- [ ] `docs/CHECKLIST_TECNICO.md` existe y refleja el orden real de ejecución.
-- [ ] `docs/CHECKPOINT.md` ya no describe el repo como “en espera”.
-- [ ] `AGENTS.md` apunta al plan maestro y al checklist técnico.
-- [ ] El próximo bloque recomendado en `docs/CHECKPOINT.md` coincide con la siguiente fase real.
+- [x] `docs/PLAN_FRONTEND_MAESTRO.md` existe y es la referencia principal del bloque.
+- [x] `docs/CHECKLIST_TECNICO.md` existe y refleja el orden real de ejecución.
+- [x] `docs/CHECKPOINT.md` ya no describe el repo como “en espera”.
+- [x] `AGENTS.md` apunta al plan maestro y al checklist técnico.
+- [x] El bloque activo/recomendado en `docs/CHECKPOINT.md` coincide con la ejecución real en curso.
 
 ## Fase 1. Estabilidad inmediata
 
@@ -53,43 +54,43 @@
 ## Fase 2. Modularización base
 
 ### Providers nuevos
-- [ ] Crear `src/providers/AppProviders.jsx`
-- [ ] Crear `src/providers/AuthSessionProvider.jsx`
-- [ ] Crear `src/providers/FiltersProvider.jsx`
-- [ ] Crear `src/providers/SocialProvider.jsx`
-- [ ] Crear `src/providers/AppDataProvider.jsx`
+- [x] Crear `src/providers/AppProviders.jsx`
+- [x] Crear `src/providers/AuthSessionProvider.jsx`
+- [x] Crear `src/providers/FiltersProvider.jsx`
+- [x] Crear `src/providers/SocialProvider.jsx`
+- [x] Crear `src/providers/AppDataProvider.jsx`
 
 ### Integración
-- [ ] `src/main.jsx` usa `AppProviders`.
-- [ ] `src/hooks/useAppState.js` sigue funcionando como compatibilidad temporal.
-- [ ] `src/providers/AppStateProvider.jsx` deja de ser el punto único de auth, social, filtros y datos.
+- [x] `src/main.jsx` usa `AppProviders`.
+- [x] `src/hooks/useAppState.js` sigue funcionando como compatibilidad temporal.
+- [x] `src/providers/AppStateProvider.jsx` deja de ser el punto único de auth, social, filtros y datos.
 
 ### Restricciones
-- [ ] No se rompe la API consumida por `App.jsx` y pantallas activas durante la transición.
-- [ ] No se mueven reglas de negocio a componentes puramente visuales.
+- [x] No se rompe la API consumida por `App.jsx` y pantallas activas durante la transición.
+- [x] No se mueven reglas de negocio a componentes puramente visuales.
 
 ### Verificación
-- [ ] `npm run lint`
-- [ ] `npm run build`
+- [x] `npm run lint`
+- [x] `npm run build`
 - [ ] Login, carga inicial y CRUD principal siguen funcionando
 
 ## Fase 3. Shell y URL
 
 ### `src/App.jsx`
-- [ ] El shell se simplifica.
-- [ ] La navegación y el share siguen funcionando.
+- [x] El shell se simplifica.
+- [x] La navegación y el share siguen funcionando.
 
 ### Estado en URL
-- [ ] Rankings persiste contexto, grupo, modo, submodo, categoría, tipo y top.
-- [ ] Comunidad persiste tab, página y filtros principales.
-- [ ] Los estados efímeros se quedan fuera de URL.
+- [x] Rankings persiste contexto, grupo, modo, submodo, categoría, tipo y top.
+- [x] Comunidad persiste tab, página y filtros principales.
+- [x] Los estados efímeros se quedan fuera de URL.
 
 ### Hook
-- [ ] Crear `src/hooks/useScreenQueryState.js`
+- [x] Crear `src/hooks/useScreenQueryState.js`
 
 ### Verificación
-- [ ] `npm run lint`
-- [ ] `npm run build`
+- [x] `npm run lint`
+- [x] `npm run build`
 - [ ] Recargar conserva el estado principal de rankings y comunidad
 
 ## Fase 4. Inicio
@@ -150,6 +151,11 @@
 
 ## Fase 7. Comunidad y búsqueda global
 
+### Nota de continuidad
+- [x] Hay avance express ya aplicado sobre social/comunidad fuera del orden ideal del plan.
+- [x] Ese avance ya cubre búsqueda útil de usuarios, follows, comentarios propios y gestión funcional de grupos.
+- [ ] La fase sigue abierta porque faltan filtros en sheet, `useGlobalSearchIndex.js` y cierre visual/estructural.
+
 ### `src/screens/ComunidadScreen.jsx`
 - [ ] El hero editorial grande desaparece.
 - [ ] Los filtros pasan a un trigger `Filtrar` con sheet.
@@ -159,8 +165,8 @@
 - [ ] Se reutiliza como contenido de sheet o se reemplaza por una versión pensada para sheet.
 
 ### `src/components/search/GlobalSearchPanel.jsx`
-- [ ] Incluye resultados de usuarios.
-- [ ] `Buscar amigos` abre una búsqueda útil de perfiles.
+- [x] Incluye resultados de usuarios.
+- [x] `Buscar amigos` abre una búsqueda útil de perfiles.
 
 ### Hook
 - [ ] Crear `src/hooks/useGlobalSearchIndex.js`

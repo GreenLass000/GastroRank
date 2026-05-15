@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import './HomeScreen.css'
 import { EmptyState } from '../components/feedback/EmptyState.jsx'
 import { MapView } from '../components/map/MapView.jsx'
 import { SectionHeader } from '../components/layout/SectionHeader.jsx'
@@ -20,6 +21,7 @@ export function HomeScreen({
   onNavigate,
   onOpenAddDish,
   onOpenEntity,
+  onOpenSearch,
 }) {
   const {
     categories,
@@ -116,12 +118,60 @@ export function HomeScreen({
   }
 
   return (
-    <section className="screen" aria-label="Pantalla de inicio">
+    <section className="screen home-screen" aria-label="Pantalla de inicio">
+      <div className="home-search-panel">
+        <div className="home-search-panel__intro">
+          <span className="home-search-panel__eyebrow">Inicio</span>
+          <h1>Encuentra qué comer en dos toques.</h1>
+          <p>Busca restaurantes, platos o personas y salta directo a lo importante.</p>
+        </div>
+        <button
+          className="home-search-trigger"
+          type="button"
+          aria-label="Buscar restaurantes, platos o perfiles"
+          onClick={() => onOpenSearch?.()}
+        >
+          <span className="home-search-trigger__icon" aria-hidden="true">
+            ⌕
+          </span>
+          <span className="home-search-trigger__content">
+            <strong>Buscar ahora</strong>
+            <span>Restaurantes, platos, usuarios...</span>
+          </span>
+        </button>
+        <div className="home-search-panel__actions" aria-label="Accesos rápidos de inicio">
+          <button
+            className="home-quick-action"
+            type="button"
+            onClick={() => onNavigate?.('rankings')}
+          >
+            <span aria-hidden="true">🏆</span>
+            Ver rankings
+          </button>
+          <button
+            className="home-quick-action"
+            type="button"
+            onClick={() => onNavigate?.('map')}
+          >
+            <span aria-hidden="true">📍</span>
+            Abrir mapa
+          </button>
+          <button
+            className="home-quick-action"
+            type="button"
+            onClick={() => onOpenAddDish?.()}
+          >
+            <span aria-hidden="true">✍️</span>
+            Añadir plato
+          </button>
+        </div>
+      </div>
+
       <div className="home-section-grid">
-        <div>
+        <div className="home-section-block">
           <SectionHeader
             title="Últimos platos añadidos"
-            actionLabel="Ver explorar"
+            actionLabel="Comunidad"
             onAction={() => onNavigate?.('community')}
           />
           {latestEntries.length > 0 ? (
@@ -156,17 +206,17 @@ export function HomeScreen({
           ) : (
             <EmptyState
               actionLabel="Añadir plato"
-              description="Aún no has añadido ningún plato. ¡Empieza puntuando!"
+              description="Empieza puntuando tu primer plato."
               onAction={onOpenAddDish}
-              title="Inicio vacío"
+              title="Todavía no hay actividad"
             />
           )}
         </div>
 
-        <div>
+        <div className="home-section-block">
           <SectionHeader
             title="🏆 Top por plato"
-            actionLabel="Abrir rankings"
+            actionLabel="Rankings"
             onAction={() => onNavigate?.('rankings')}
           />
           <div className="chip-row chip-row--categories">
@@ -247,129 +297,137 @@ export function HomeScreen({
             </div>
           ) : (
             <EmptyState
-              description="Sin datos para mostrar en este contexto."
-              title="Top por plato vacío"
+              description="Cambia filtros o añade valoraciones para generar el top."
+              title="Aún no hay top disponible"
             />
           )}
         </div>
       </div>
 
-      <SectionHeader
-        title="Restaurantes cercanos"
-        actionLabel="Abrir mapa"
-        onAction={() => onNavigate?.('map')}
-      />
-      <article className="map-card map-card--home-nearby">
-        <MapView
-          center={homeNearbySection.origin}
-          className="home-nearby-map"
-          emptyDescription={`No hay restaurantes dentro de ${formatDistance(activeNearbyRadius.meters).toLowerCase()}. Prueba con un radio mayor o abre el mapa completo.`}
-          emptyTitle="Sin restaurantes en este radio"
-          focusMarker={{
-            ...homeNearbySection.origin,
-            id: 'home-origin',
-            nombre: homeNearbySection.originLabel,
-          }}
-          markers={nearbyMapMarkers}
-          onSelectMarker={setSelectedNearbyRestaurantId}
-          pinStyle={defaultPinStyle}
-          selectedMarkerId={effectiveSelectedNearbyRestaurantId}
-          showTopline={false}
-          zoom={activeNearbyRadius.zoom}
+      <div className="home-nearby-section">
+        <SectionHeader
+          title="Restaurantes cercanos"
+          actionLabel="Mapa"
+          onAction={() => onNavigate?.('map')}
         />
-      </article>
+        <p className="home-section-note">
+          Centro actual: {homeNearbySection.originLabel}. Ajusta el radio y abre solo lo que te interese.
+        </p>
+        <article className="map-card map-card--home-nearby">
+          <MapView
+            center={homeNearbySection.origin}
+            className="home-nearby-map"
+            emptyDescription={`No hay restaurantes dentro de ${formatDistance(activeNearbyRadius.meters).toLowerCase()}. Amplía el radio o abre el mapa completo.`}
+            emptyTitle="Sin restaurantes en este radio"
+            focusMarker={{
+              ...homeNearbySection.origin,
+              id: 'home-origin',
+              nombre: homeNearbySection.originLabel,
+            }}
+            markers={nearbyMapMarkers}
+            onSelectMarker={setSelectedNearbyRestaurantId}
+            pinStyle={defaultPinStyle}
+            selectedMarkerId={effectiveSelectedNearbyRestaurantId}
+            showTopline={false}
+            zoom={activeNearbyRadius.zoom}
+          />
+        </article>
 
-      <div className="surface-card home-nearby-slider">
-        <strong>Radio: {formatDistance(activeNearbyRadius.meters)}</strong>
-        <input
-          className="home-nearby-slider__input"
-          type="range"
-          min="0"
-          max={String(HOME_NEARBY_RADIUS_OPTIONS.length - 1)}
-          step="1"
-          value={activeNearbyRadiusIndex}
-          onChange={handleNearbyRadiusChange}
-          aria-label="Seleccionar radio de restaurantes cercanos"
-          style={{
-            '--nearby-slider-progress': `${activeNearbyRadiusProgress}%`,
-          }}
-        />
-      </div>
-
-      {visibleNearbyRestaurants.length > 0 ? (
-        <div className="list-stack">
-          {visibleNearbyRestaurants.map((restaurant) => (
-            <div key={restaurant.id} className="home-nearby-item">
-              <button
-                className={`surface-card surface-card--button home-nearby-card${
-                  restaurant.id === effectiveSelectedNearbyRestaurantId
-                    ? ' surface-card--selected'
-                    : ''
-                }`}
-                type="button"
-                aria-expanded={restaurant.id === effectiveSelectedNearbyRestaurantId}
-                onClick={() => handleNearbyRestaurantToggle(restaurant.id)}
-              >
-                <div className="ranking-card__meta">
-                  <div>
-                    <strong>{restaurant.nombre}</strong>
-                    <p>{formatStreetAddress(restaurant.direccion_texto)}</p>
-                  </div>
-                  <span
-                    className={`ranking-card__score ranking-card__score--${getScoreTone(restaurant.restaurant_score)}`}
-                  >
-                    {formatScore(restaurant.restaurant_score)}
-                  </span>
-                </div>
-                <div className="detail-grid detail-grid--compact">
-                  <span className="status-pill">{restaurant.distanceLabel}</span>
-                  <span className="status-pill">{restaurant.precio_rango}</span>
-                  <span className="status-pill">
-                    {restaurant.total_entries} platos
-                  </span>
-                </div>
-              </button>
-
-              {restaurant.id === effectiveSelectedNearbyRestaurantId ? (
-                <article className="surface-card home-nearby-panel">
-                  <span className="status-pill home-nearby-panel__distance">
-                    📍 {restaurant.distanceLabel}
-                  </span>
-                  <div className="modal-actions home-nearby-panel__actions">
-                    <button
-                      className="pill-button"
-                      type="button"
-                      onClick={() =>
-                        onOpenEntity?.({ type: 'restaurant', id: restaurant.id })
-                      }
-                    >
-                      🔵 Ver detalle
-                    </button>
-                    <button
-                      className="primary-button"
-                      type="button"
-                      onClick={() => {
-                        const mapsUrl = generateGoogleMapsDirectionsUrl(restaurant)
-
-                        if (mapsUrl) {
-                          window.open(mapsUrl, '_blank', 'noreferrer')
-                        }
-                      }}
-                    >
-                      🗺 Cómo llegar
-                    </button>
-                  </div>
-                </article>
-              ) : null}
-            </div>
-          ))}
+        <div className="surface-card home-nearby-slider">
+          <div className="home-nearby-slider__header">
+            <strong>Radio activo</strong>
+            <span>{formatDistance(activeNearbyRadius.meters)}</span>
+          </div>
+          <input
+            className="home-nearby-slider__input"
+            type="range"
+            min="0"
+            max={String(HOME_NEARBY_RADIUS_OPTIONS.length - 1)}
+            step="1"
+            value={activeNearbyRadiusIndex}
+            onChange={handleNearbyRadiusChange}
+            aria-label="Seleccionar radio de restaurantes cercanos"
+            style={{
+              '--nearby-slider-progress': `${activeNearbyRadiusProgress}%`,
+            }}
+          />
         </div>
-      ) : (
-        <EmptyState
-          description={`Amplía el radio o abre el mapa completo para explorar más zonas desde ${homeNearbySection.originLabel.toLowerCase()}.`}
-          title="Sin restaurantes cercanos ahora mismo"
-        />
-      )}
+
+        {visibleNearbyRestaurants.length > 0 ? (
+          <div className="list-stack">
+            {visibleNearbyRestaurants.map((restaurant) => (
+              <div key={restaurant.id} className="home-nearby-item">
+                <button
+                  className={`surface-card surface-card--button home-nearby-card${
+                    restaurant.id === effectiveSelectedNearbyRestaurantId
+                      ? ' surface-card--selected'
+                      : ''
+                  }`}
+                  type="button"
+                  aria-expanded={restaurant.id === effectiveSelectedNearbyRestaurantId}
+                  onClick={() => handleNearbyRestaurantToggle(restaurant.id)}
+                >
+                  <div className="ranking-card__meta">
+                    <div>
+                      <strong>{restaurant.nombre}</strong>
+                      <p>{formatStreetAddress(restaurant.direccion_texto)}</p>
+                    </div>
+                    <span
+                      className={`ranking-card__score ranking-card__score--${getScoreTone(restaurant.restaurant_score)}`}
+                    >
+                      {formatScore(restaurant.restaurant_score)}
+                    </span>
+                  </div>
+                  <div className="detail-grid detail-grid--compact">
+                    <span className="status-pill">{restaurant.distanceLabel}</span>
+                    <span className="status-pill">{restaurant.precio_rango}</span>
+                    <span className="status-pill">
+                      {restaurant.total_entries} platos
+                    </span>
+                  </div>
+                </button>
+
+                {restaurant.id === effectiveSelectedNearbyRestaurantId ? (
+                  <article className="surface-card home-nearby-panel">
+                    <span className="status-pill home-nearby-panel__distance">
+                      📍 {restaurant.distanceLabel}
+                    </span>
+                    <div className="modal-actions home-nearby-panel__actions">
+                      <button
+                        className="pill-button"
+                        type="button"
+                        onClick={() =>
+                          onOpenEntity?.({ type: 'restaurant', id: restaurant.id })
+                        }
+                      >
+                        Ver detalle
+                      </button>
+                      <button
+                        className="primary-button"
+                        type="button"
+                        onClick={() => {
+                          const mapsUrl = generateGoogleMapsDirectionsUrl(restaurant)
+
+                          if (mapsUrl) {
+                            window.open(mapsUrl, '_blank', 'noreferrer')
+                          }
+                        }}
+                      >
+                        Cómo llegar
+                      </button>
+                    </div>
+                  </article>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyState
+            description={`Amplía el radio o abre el mapa completo desde ${homeNearbySection.originLabel.toLowerCase()}.`}
+            title="Sin restaurantes cercanos ahora mismo"
+          />
+        )}
+      </div>
     </section>
   )
 }

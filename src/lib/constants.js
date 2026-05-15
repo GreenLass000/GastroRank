@@ -3,6 +3,7 @@ export const STORAGE_KEYS = {
   authToken: 'ranking-gastronomico:auth-token:v1',
   filters: 'ranking-gastronomico:filters:v1',
   themeMode: 'ranking-gastronomico:theme-mode:v1',
+  hideBottomNavLabels: 'ranking-gastronomico:hide-bottom-nav-labels:v1',
   defaultPinStyle: 'ranking-gastronomico:pin-style:v2',
   restaurantPinStyleOverrides: 'ranking-gastronomico:pin-style-overrides:v1',
   rankingsRecentDishTypes: 'ranking-gastronomico:rankings-recent-dish-types:v1',
@@ -19,7 +20,7 @@ export const BRAND_COLORS = {
 
 export const NAV_ITEMS = [
   { id: 'home', icon: '🏠', label: 'Inicio' },
-  { id: 'community', icon: '✨', label: 'Explorar' },
+  { id: 'community', icon: '✨', label: 'Comunidad' },
   { id: 'map', icon: '🗺️', label: 'Mapa' },
   { id: 'rankings', icon: '🏆', label: 'Rankings' },
   { id: 'profile', icon: '👤', label: 'Perfil' },

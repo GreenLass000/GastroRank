@@ -19,12 +19,15 @@ Current status:
 - there is an active frontend block with a new master plan
 - the repository is not in maintenance-only mode right now
 - the current block combines modularization, visible UX fixes, technical debt and session hardening
+- phase 0 is expected to stay closed unless continuity drifts again
+- phases 1 to 3 may be in progress at the same time under separate ownership
 
 Current next-step assumption:
 - start from `docs/CHECKPOINT.md`
 - then inspect `docs/DESIGNED.md`
 - then continue with `docs/PLAN_FRONTEND_MAESTRO.md`
-- then execute the next unchecked block in `docs/CHECKLIST_TECNICO.md`
+- then confirm whether the active ownership is `Fase 1`, `Fase 2` or `Fase 3`
+- then execute only the owned phase block in `docs/CHECKLIST_TECNICO.md`
 - do not reopen alternative broad plans while this one is active unless the user explicitly replaces it
 
 Current files that matter most for the next block:

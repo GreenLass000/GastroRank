@@ -1,435 +1,64 @@
+import './RankingsScreen.css'
 import { EmptyState } from '../components/feedback/EmptyState.jsx'
-import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { FilterPanel } from '../components/filters/FilterPanel.jsx'
+import { useRankingsController } from '../hooks/useRankingsController.js'
 import { ModalSheet } from '../components/layout/ModalSheet.jsx'
 import { RankingList } from '../components/rankings/RankingList.jsx'
-import { useAppState } from '../hooks/useAppState.js'
-import { usePersistentState } from '../hooks/usePersistentState.js'
-import { createPublicShareToken } from '../lib/api.js'
-import {
-  GLOBAL_RANKING_VIEWS,
-  RANKING_CONTEXTS,
-  RANKING_MODES,
-  STORAGE_KEYS,
-} from '../lib/constants.js'
+import { GLOBAL_RANKING_VIEWS, RANKING_CONTEXTS, RANKING_MODES } from '../lib/constants.js'
 import { formatDate, formatRelativePrice, formatScore } from '../lib/format.js'
-import {
-  buildCategoryFilteredRestaurantRankings,
-  buildDishTypeFilteredRestaurantRankings,
-  buildGlobalCategoryRankings,
-  buildGlobalDishEntryRankings,
-  buildGlobalRestaurantRankings,
-  buildRankingDetailEntries,
-  filterEntriesByContext,
-} from '../lib/ranking.js'
 import { getScoreTone } from '../lib/scoring.js'
-
-const TOP_LIMIT_OPTIONS = [5, 10, 25, 50]
-
-const SHARE_CONTEXT_MAP = {
-  private: 'mi_ranking',
-  group: 'grupo',
-  public: 'comunidad',
-}
-
-function normalizeText(value) {
-  return String(value ?? '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim()
-}
-
-function sortByName(items, accessor) {
-  return [...items].sort((left, right) =>
-    accessor(left).localeCompare(accessor(right), 'es'),
-  )
-}
-
-function pushRecentDishTypeId(currentIds, nextId) {
-  if (!nextId) {
-    return currentIds
-  }
-
-  return [nextId, ...currentIds.filter((id) => id !== nextId)].slice(0, 5)
-}
-
-function buildInlineDetailState({
-  activeCategory,
-  activeCategoryDishType,
-  activeGlobalView,
-  activeMode,
-  categories,
-  currentContextEntries,
-  dishTypes,
-  expandedEntry,
-  restaurants,
-  selectedDishType,
-  users,
-}) {
-  if (!expandedEntry) {
-    return null
-  }
-
-  let matchingEntries = []
-  let title = expandedEntry.primaryLabel ?? expandedEntry.restaurantName ?? 'Detalle'
-  let subtitle = expandedEntry.secondaryLabel ?? ''
-
-  if (activeMode === 'category') {
-    matchingEntries = currentContextEntries.filter(
-      (entry) =>
-        entry.restaurant_id === expandedEntry.restaurantId &&
-        entry.categoria_id === activeCategory?.id &&
-        (!activeCategoryDishType?.id || entry.tipo_plato_id === activeCategoryDishType.id),
-    )
-    title = expandedEntry.restaurantName ?? title
-    subtitle = activeCategoryDishType
-      ? `${activeCategory?.icono ?? '🍽️'} ${activeCategoryDishType.nombre}`
-      : `${activeCategory?.icono ?? '🍽️'} ${activeCategory?.nombre ?? 'Categoría'}`
-  } else if (activeMode === 'dishType') {
-    matchingEntries = currentContextEntries.filter(
-      (entry) =>
-        entry.restaurant_id === expandedEntry.restaurantId &&
-        entry.tipo_plato_id === selectedDishType?.id,
-    )
-    title = expandedEntry.restaurantName ?? title
-    subtitle = `${expandedEntry.categoryIcon ?? activeCategory?.icono ?? '🍽️'} ${selectedDishType?.nombre ?? 'Tipo de plato'}`
-  } else if (activeGlobalView === 'restaurant') {
-    matchingEntries = currentContextEntries.filter(
-      (entry) => entry.restaurant_id === expandedEntry.restaurantId,
-    )
-    title = expandedEntry.restaurantName ?? title
-    subtitle = 'Últimas y mejores entradas del restaurante'
-  } else if (activeGlobalView === 'category') {
-    matchingEntries = currentContextEntries.filter(
-      (entry) => entry.categoria_id === expandedEntry.categoryId,
-    )
-    subtitle = `${expandedEntry.votos} entradas dentro de esta categoría`
-  } else {
-    matchingEntries = currentContextEntries.filter((entry) => entry.id === expandedEntry.id)
-    subtitle = expandedEntry.secondaryLabel ?? 'Detalle de la entrada'
-  }
-
-  return {
-    title,
-    subtitle,
-    topScore: expandedEntry.score,
-    topVotes: expandedEntry.votos,
-    detailEntries: buildRankingDetailEntries({
-      categories,
-      dishTypes,
-      entries: matchingEntries,
-      restaurants,
-      users,
-    }),
-  }
-}
 
 export function RankingsScreen({ onOpenReport }) {
   const {
-    activeFilterChips,
-    activeFilters,
-    applyFilters,
-    availableFilterOptions,
-    categories,
-    currentGroup,
-    currentUser,
-    dishTypes,
-    filterOrigin,
-    filterOriginLabel,
-    filteredDishEntries,
-    hasActiveFilters,
-    removeFilter,
-    resetFilters,
-    restaurants,
-    users,
-  } = useAppState()
-  const [activeContext, setActiveContext] = useState('private')
-  const [activeMode, setActiveMode] = useState('dishType')
-  const [activeGlobalView, setActiveGlobalView] = useState('dish')
-  const [topLimit, setTopLimit] = useState(10)
-  const [activeCategoryId, setActiveCategoryId] = useState('')
-  const [activeCategoryDishTypeId, setActiveCategoryDishTypeId] = useState('')
-  const [dishTypeQuery, setDishTypeQuery] = useState('')
-  const [selectedDishTypeId, setSelectedDishTypeId] = useState('')
-  const [recentDishTypeIds, setRecentDishTypeIds] = usePersistentState(
-    STORAGE_KEYS.rankingsRecentDishTypes,
-    [],
-  )
-  const [expandedEntryId, setExpandedEntryId] = useState('')
-  const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
-  const [shareStatus, setShareStatus] = useState({ tone: '', message: '' })
-  const [isSharing, setIsSharing] = useState(false)
-  const deferredDishTypeQuery = useDeferredValue(dishTypeQuery)
-
-  const currentContextEntries = useMemo(
-    () =>
-      filterEntriesByContext(
-        filteredDishEntries,
-        activeContext,
-        currentUser.id,
-        currentGroup?.id ?? null,
-      ),
-    [activeContext, currentGroup?.id, currentUser.id, filteredDishEntries],
-  )
-  const sortedCategories = useMemo(
-    () => sortByName(categories, (category) => category.nombre),
-    [categories],
-  )
-  const allDishTypesSorted = useMemo(
-    () => sortByName(dishTypes, (dishType) => dishType.nombre),
-    [dishTypes],
-  )
-  const categoryDishTypes = useMemo(
-    () =>
-      sortByName(
-        dishTypes.filter((dishType) => dishType.categoria_id === activeCategoryId),
-        (dishType) => dishType.nombre,
-      ),
-    [activeCategoryId, dishTypes],
-  )
-  const currentContextDishTypeIds = useMemo(
-    () => new Set(currentContextEntries.map((entry) => entry.tipo_plato_id)),
-    [currentContextEntries],
-  )
-  const recentDishTypes = useMemo(
-    () =>
-      recentDishTypeIds
-        .map((dishTypeId) => allDishTypesSorted.find((dishType) => dishType.id === dishTypeId))
-        .filter(Boolean),
-    [allDishTypesSorted, recentDishTypeIds],
-  )
-  const matchingDishTypes = useMemo(() => {
-    const normalizedQuery = normalizeText(deferredDishTypeQuery)
-
-    return allDishTypesSorted.filter((dishType) => {
-      if (!normalizedQuery) {
-        return true
-      }
-
-      return (
-        normalizeText(dishType.nombre).includes(normalizedQuery) ||
-        normalizeText(dishType.alias).includes(normalizedQuery)
-      )
-    })
-  }, [allDishTypesSorted, deferredDishTypeQuery])
-  const activeCategory = useMemo(
-    () => categories.find((category) => category.id === activeCategoryId) ?? null,
-    [activeCategoryId, categories],
-  )
-  const activeCategoryDishType = useMemo(
-    () =>
-      dishTypes.find((dishType) => dishType.id === activeCategoryDishTypeId) ?? null,
-    [activeCategoryDishTypeId, dishTypes],
-  )
-  const selectedDishType = useMemo(
-    () => dishTypes.find((dishType) => dishType.id === selectedDishTypeId) ?? null,
-    [dishTypes, selectedDishTypeId],
-  )
-  const rankingEntries = useMemo(() => {
-    if (activeMode === 'category') {
-      return buildCategoryFilteredRestaurantRankings({
-        categories,
-        dishTypes,
-        entries: currentContextEntries,
-        restaurants,
-        categoryId: activeCategoryId,
-        dishTypeId: activeCategoryDishTypeId,
-      })
-    }
-
-    if (activeMode === 'dishType') {
-      return buildDishTypeFilteredRestaurantRankings({
-        categories,
-        dishTypes,
-        entries: currentContextEntries,
-        restaurants,
-        dishTypeId: selectedDishTypeId,
-      })
-    }
-
-    if (activeGlobalView === 'category') {
-      return buildGlobalCategoryRankings({
-        categories,
-        entries: currentContextEntries,
-      })
-    }
-
-    if (activeGlobalView === 'restaurant') {
-      return buildGlobalRestaurantRankings({
-        entries: currentContextEntries,
-        restaurants,
-      })
-    }
-
-    return buildGlobalDishEntryRankings({
-      categories,
-      dishTypes,
-      entries: currentContextEntries,
-      restaurants,
-    })
-  }, [
     activeCategoryDishTypeId,
     activeCategoryId,
+    activeContext,
+    activeFilters,
+    activeFilterChips,
     activeGlobalView,
+    activeGroup,
     activeMode,
-    categories,
-    currentContextEntries,
-    dishTypes,
-    restaurants,
+    applyFilters,
+    availableFilterOptions,
+    categoryDishTypes,
+    closeActionSheet,
+    closeFilterPanel,
+    dishTypeQuery,
+    filterOriginLabel,
+    getExpandedDetailState,
+    groupsForCurrentUser,
+    handleCopyShareLink,
+    handleOpenReport,
+    handleSelectDishType,
+    hasActiveFilters,
+    isActionSheetOpen,
+    isFilterPanelOpen,
+    isGroupContextEmpty,
+    isSharing,
+    matchingDishTypes,
+    openActionSheet,
+    openFilterPanel,
+    rankingEntries,
+    recentDishTypes,
+    removeFilter,
+    resetFilters,
     selectedDishTypeId,
-  ])
-  const visibleRankingItems = useMemo(
-    () => rankingEntries.slice(0, topLimit),
-    [rankingEntries, topLimit],
-  )
-  const expandedEntry = useMemo(
-    () => rankingEntries.find((entry) => entry.id === expandedEntryId) ?? null,
-    [expandedEntryId, rankingEntries],
-  )
-  const expandedState = useMemo(
-    () =>
-      buildInlineDetailState({
-        activeCategory,
-        activeCategoryDishType,
-        activeGlobalView,
-        activeMode,
-        categories,
-        currentContextEntries,
-        dishTypes,
-        expandedEntry,
-        restaurants,
-        selectedDishType,
-        users,
-      }),
-    [
-      activeCategory,
-      activeCategoryDishType,
-      activeGlobalView,
-      activeMode,
-      categories,
-      currentContextEntries,
-      dishTypes,
-      expandedEntry,
-      restaurants,
-      selectedDishType,
-      users,
-    ],
-  )
-
-  useEffect(() => {
-    if (activeCategoryId || sortedCategories.length === 0) {
-      return
-    }
-
-    setActiveCategoryId(sortedCategories[0].id)
-  }, [activeCategoryId, sortedCategories])
-
-  useEffect(() => {
-    if (!activeCategoryDishTypeId) {
-      return
-    }
-
-    const stillExists = categoryDishTypes.some(
-      (dishType) => dishType.id === activeCategoryDishTypeId,
-    )
-
-    if (!stillExists) {
-      setActiveCategoryDishTypeId('')
-    }
-  }, [activeCategoryDishTypeId, categoryDishTypes])
-
-  useEffect(() => {
-    if (selectedDishTypeId && allDishTypesSorted.some((dishType) => dishType.id === selectedDishTypeId)) {
-      return
-    }
-
-    const nextDishTypeId =
-      allDishTypesSorted.find((dishType) => currentContextDishTypeIds.has(dishType.id))?.id ??
-      recentDishTypeIds.find((dishTypeId) =>
-        allDishTypesSorted.some((dishType) => dishType.id === dishTypeId),
-      ) ??
-      allDishTypesSorted[0]?.id ??
-      ''
-
-    if (nextDishTypeId !== selectedDishTypeId) {
-      setSelectedDishTypeId(nextDishTypeId)
-    }
-  }, [
-    allDishTypesSorted,
-    currentContextDishTypeIds,
-    recentDishTypeIds,
-    selectedDishTypeId,
-  ])
-
-  useEffect(() => {
-    if (!expandedEntryId) {
-      return
-    }
-
-    const stillVisible = rankingEntries.some((entry) => entry.id === expandedEntryId)
-
-    if (!stillVisible) {
-      setExpandedEntryId('')
-    }
-  }, [expandedEntryId, rankingEntries])
-
-  function resetExpanded() {
-    setExpandedEntryId('')
-  }
-
-  function handleSelectDishType(dishTypeId) {
-    setSelectedDishTypeId(dishTypeId)
-    setRecentDishTypeIds((currentIds) => pushRecentDishTypeId(currentIds, dishTypeId))
-    resetExpanded()
-  }
-
-  async function handleShareRanking() {
-    setShareStatus({ tone: '', message: '' })
-    setIsSharing(true)
-
-    try {
-      const response = await createPublicShareToken({
-        context: SHARE_CONTEXT_MAP[activeContext],
-        ranking_type: activeMode === 'global' ? 'global' : activeMode,
-        filters: {
-          ...activeFilters,
-        },
-        group_id: activeContext === 'group' ? currentGroup?.id ?? null : null,
-        created_by_user_id: currentUser.id,
-      })
-      const shareUrl = `${window.location.origin}/informe?share=${response.shareToken.token}`
-
-      await navigator.clipboard.writeText(shareUrl)
-      setShareStatus({
-        tone: 'success',
-        message: 'Guardado ✅ — Enlace público copiado al portapapeles.',
-      })
-    } catch (error) {
-      setShareStatus({
-        tone: 'error',
-        message: `Error al guardar ❌ — ${error instanceof Error ? error.message : 'No se pudo compartir el ranking.'}`,
-      })
-    } finally {
-      setIsSharing(false)
-    }
-  }
+    selectedGroupId,
+    setDishTypeQuery,
+    expandedEntryId,
+    setExpandedEntryId,
+    setQueryState,
+    shareStatus,
+    shouldShowGroupSelector,
+    sortedCategories,
+    topLimit,
+    topLimitOptions,
+    toggleExpandedEntry,
+    visibleRankingItems,
+  } = useRankingsController({ onOpenReport })
 
   function renderExpandedContent(entry) {
-    const detailState =
-      expandedEntry?.id === entry.id ? expandedState : buildInlineDetailState({
-        activeCategory,
-        activeCategoryDishType,
-        activeGlobalView,
-        activeMode,
-        categories,
-        currentContextEntries,
-        dishTypes,
-        expandedEntry: entry,
-        restaurants,
-        selectedDishType,
-        users,
-      })
+    const detailState = getExpandedDetailState(entry)
 
     if (!detailState) {
       return null
@@ -502,7 +131,7 @@ export function RankingsScreen({ onOpenReport }) {
   }
 
   return (
-    <section className="screen" aria-label="Pantalla de rankings">
+    <section className="screen rankings-screen" aria-label="Pantalla de rankings">
       {hasActiveFilters ? (
         <div className="chip-row" aria-label="Filtros activos">
           {activeFilterChips.map((chip) => (
@@ -526,14 +155,54 @@ export function RankingsScreen({ onOpenReport }) {
             type="button"
             aria-pressed={context.id === activeContext}
             onClick={() => {
-              setActiveContext(context.id)
-              resetExpanded()
+              setQueryState({ activeContext: context.id })
+              setExpandedEntryId('')
             }}
           >
             {context.label}
           </button>
         ))}
       </div>
+
+      {activeContext === 'group' && !isGroupContextEmpty ? (
+        <article className="rankings-group-card">
+          <div className="rankings-group-card__header">
+            <div>
+              <strong>Grupo del ranking</strong>
+              <p>Elige qué mesa compartida quieres usar como contexto.</p>
+            </div>
+            <span className="rankings-group-card__pill">
+              {groupsForCurrentUser.length} grupo{groupsForCurrentUser.length === 1 ? '' : 's'}
+            </span>
+          </div>
+
+          {shouldShowGroupSelector ? (
+            <select
+              className="rankings-group-card__select"
+              value={selectedGroupId}
+              onChange={(event) => {
+                setQueryState({ selectedGroupId: event.target.value })
+                setExpandedEntryId('')
+              }}
+            >
+              {groupsForCurrentUser.map((group) => (
+                <option key={group.id} value={group.id}>
+                  {group.nombre}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <strong>{activeGroup?.nombre ?? 'Tu grupo activo'}</strong>
+          )}
+        </article>
+      ) : null}
+
+      {isGroupContextEmpty ? (
+        <article className="rankings-empty-group">
+          <strong>Sin grupos disponibles</strong>
+          <p>Únete o crea uno para comparar el ranking con tu gente.</p>
+        </article>
+      ) : null}
 
       <div className="rankings-mode-row" aria-label="Modo de ranking">
         {RANKING_MODES.map((mode) => (
@@ -543,8 +212,8 @@ export function RankingsScreen({ onOpenReport }) {
             type="button"
             aria-pressed={mode.id === activeMode}
             onClick={() => {
-              setActiveMode(mode.id)
-              resetExpanded()
+              setQueryState({ activeMode: mode.id })
+              setExpandedEntryId('')
             }}
           >
             {mode.label}
@@ -561,8 +230,8 @@ export function RankingsScreen({ onOpenReport }) {
               type="button"
               aria-pressed={view.id === activeGlobalView}
               onClick={() => {
-                setActiveGlobalView(view.id)
-                resetExpanded()
+                setQueryState({ activeGlobalView: view.id })
+                setExpandedEntryId('')
               }}
             >
               {view.label}
@@ -581,9 +250,11 @@ export function RankingsScreen({ onOpenReport }) {
                 type="button"
                 aria-pressed={category.id === activeCategoryId}
                 onClick={() => {
-                  setActiveCategoryId(category.id)
-                  setActiveCategoryDishTypeId('')
-                  resetExpanded()
+                  setQueryState({
+                    activeCategoryId: category.id,
+                    activeCategoryDishTypeId: '',
+                  })
+                  setExpandedEntryId('')
                 }}
               >
                 <span aria-hidden="true">{category.icono}</span>
@@ -598,8 +269,8 @@ export function RankingsScreen({ onOpenReport }) {
               type="button"
               aria-pressed={!activeCategoryDishTypeId}
               onClick={() => {
-                setActiveCategoryDishTypeId('')
-                resetExpanded()
+                setQueryState({ activeCategoryDishTypeId: '' })
+                setExpandedEntryId('')
               }}
             >
               Todos
@@ -611,8 +282,8 @@ export function RankingsScreen({ onOpenReport }) {
                 type="button"
                 aria-pressed={dishType.id === activeCategoryDishTypeId}
                 onClick={() => {
-                  setActiveCategoryDishTypeId(dishType.id)
-                  resetExpanded()
+                  setQueryState({ activeCategoryDishTypeId: dishType.id })
+                  setExpandedEntryId('')
                 }}
               >
                 {dishType.nombre}
@@ -674,68 +345,61 @@ export function RankingsScreen({ onOpenReport }) {
       ) : null}
 
       <div className="ranking-swipe-surface">
-        <div className="section-header rankings-top-header">
-          <div className="rankings-top-header__main">
-            <h2>Top</h2>
+        <div className="rankings-toolbar">
+          <div className="rankings-toolbar__main">
+            <p className="rankings-toolbar__eyebrow">Resumen rápido</p>
+            <div className="rankings-toolbar__topline">
+              <h2>Top</h2>
+              {activeContext === 'group' && activeGroup ? (
+                <span className="status-pill">{activeGroup.nombre}</span>
+              ) : null}
+            </div>
             <div className="rankings-top-limit" aria-label="Selector de Top N">
-              {TOP_LIMIT_OPTIONS.map((limit) => (
+              {topLimitOptions.map((limit) => (
                 <button
                   key={limit}
                   className={`rankings-top-limit__button${limit === topLimit ? ' rankings-top-limit__button--active' : ''}`}
                   type="button"
                   aria-pressed={limit === topLimit}
-                  onClick={() => setTopLimit(limit)}
+                  onClick={() => setQueryState({ topLimit: limit })}
                 >
                   {limit}
                 </button>
               ))}
             </div>
           </div>
-          <button
-            type="button"
-            className="section-header__icon-button"
-            aria-label="Abrir filtros"
-            onClick={() => setIsFilterPanelOpen(true)}
-          >
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M3 5h18" />
-              <path d="M6 12h12" />
-              <path d="M10 19h4" />
-            </svg>
-          </button>
-        </div>
 
-        <div className="pill-row">
-          <button
-            className="pill-button"
-            type="button"
-            onClick={() =>
-              onOpenReport?.({
-                contextId: activeContext,
-                filters: activeFilters,
-                filterOrigin,
-                typeKey: activeMode === 'global' ? 'global' : activeMode,
-              })
-            }
-          >
-            Informe
-          </button>
-          <button
-            className="pill-button"
-            type="button"
-            onClick={handleShareRanking}
-            disabled={isSharing}
-          >
-            {isSharing ? 'Cargando...' : 'Compartir'}
-          </button>
+          <div className="rankings-toolbar__actions">
+            <button
+              type="button"
+              className="rankings-share-trigger"
+              onClick={openActionSheet}
+            >
+              <strong>Lo que más me gusta</strong>
+              <span>Informe y enlace público</span>
+            </button>
+
+            <button
+              type="button"
+              className="section-header__icon-button"
+              aria-label="Abrir filtros"
+              onClick={openFilterPanel}
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M3 5h18" />
+                <path d="M6 12h12" />
+                <path d="M10 19h4" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         {shareStatus.message ? (
@@ -749,31 +413,61 @@ export function RankingsScreen({ onOpenReport }) {
           <RankingList
             entries={visibleRankingItems}
             expandedEntryId={expandedEntryId}
-            onToggle={(entry) =>
-              setExpandedEntryId((currentId) => (currentId === entry.id ? '' : entry.id))
-            }
+            onToggle={toggleExpandedEntry}
             renderExpandedContent={renderExpandedContent}
           />
         ) : (
           <EmptyState
             className="rankings-empty-block"
-            description="Sin datos para mostrar en este contexto."
-            title="Rankings vacíos"
+            description={
+              activeContext === 'group' && !activeGroup
+                ? 'Selecciona un grupo para empezar a comparar.'
+                : 'Sin datos para mostrar en este contexto.'
+            }
+            title={activeContext === 'group' && !activeGroup ? 'Elige un grupo' : 'Rankings vacíos'}
           />
         )}
       </div>
 
+      {isActionSheetOpen ? (
+        <ModalSheet title="Lo que más me gusta" onClose={closeActionSheet}>
+          <div className="rankings-action-sheet__panel">
+            <p className="rankings-action-sheet__intro">
+              Guarda una versión imprimible o copia un enlace público del ranking actual.
+            </p>
+
+            <div className="rankings-action-sheet__actions">
+              <button
+                className="rankings-action-button rankings-action-button--accent"
+                type="button"
+                onClick={handleOpenReport}
+              >
+                <strong>Ver informe</strong>
+                <span>Abre el resumen listo para revisar o imprimir.</span>
+              </button>
+
+              <button
+                className="rankings-action-button"
+                type="button"
+                onClick={handleCopyShareLink}
+                disabled={isSharing}
+              >
+                <strong>{isSharing ? 'Cargando...' : 'Copiar enlace'}</strong>
+                <span>Genera un acceso público del ranking que estás viendo ahora.</span>
+              </button>
+            </div>
+          </div>
+        </ModalSheet>
+      ) : null}
+
       {isFilterPanelOpen ? (
-        <ModalSheet
-          title="Filtros de rankings"
-          onClose={() => setIsFilterPanelOpen(false)}
-        >
+        <ModalSheet title="Filtros de rankings" onClose={closeFilterPanel}>
           <FilterPanel
             availableOptions={availableFilterOptions}
             filterOriginLabel={filterOriginLabel}
             initialFilters={activeFilters}
             onApply={applyFilters}
-            onClose={() => setIsFilterPanelOpen(false)}
+            onClose={closeFilterPanel}
             onReset={resetFilters}
           />
         </ModalSheet>

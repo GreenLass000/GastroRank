@@ -34,6 +34,7 @@
   - fase híbrida con compatibilidad temporal
   - retirada final de token en `localStorage`
 - El bloque `Lo que más me gusta` sustituye en rankings a la pareja visible `Informe` + `Compartir`.
+- La ejecución puede solaparse entre `Fase 1`, `Fase 2` y `Fase 3` si hay ownership separado, pero el cierre sigue registrándose por fase y con verificación propia.
 
 ## Arquitectura objetivo
 
@@ -84,6 +85,7 @@ Cambios:
 
 Criterio de cierre:
 - La continuidad documental refleja un bloque activo real y una ruta clara de ejecución.
+- Si `Fase 1`, `Fase 2` y `Fase 3` arrancan en paralelo, esa ejecución debe quedar reflejada en `docs/CHECKPOINT.md` y `docs/CHECKLIST_TECNICO.md`.
 
 ### Fase 1. Estabilidad inmediata
 Objetivo:

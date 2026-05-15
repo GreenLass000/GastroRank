@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import 'leaflet/dist/leaflet.css'
 import './index.css'
 import App from './App.jsx'
-import { AppStateProvider } from './providers/AppStateProvider.jsx'
+import { AppProviders } from './providers/AppProviders.jsx'
 import { ThemeProvider } from './providers/ThemeProvider.jsx'
 
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
@@ -15,9 +15,9 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     <ThemeProvider>
-      <AppStateProvider>
+      <AppProviders>
         <App />
-      </AppStateProvider>
+      </AppProviders>
     </ThemeProvider>
   </StrictMode>,
 )

@@ -336,7 +336,12 @@ function ListDetailSection({
   )
 }
 
-export function ProfileScreen({ onNavigate, onOpenEntity }) {
+export function ProfileScreen({
+  hideBottomNavLabels = false,
+  onHideBottomNavLabelsChange,
+  onNavigate,
+  onOpenEntity,
+}) {
   const { setThemeMode, themeMode } = useTheme()
   const {
     achievements,
@@ -352,10 +357,12 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
     groupsForCurrentUser,
     inspirationListItems,
     inspirationLists,
+    joinGroupByInviteCode,
     loadFollows,
     loadAchievements,
     loadInspirationLists,
     markTried,
+    pendingGroupsForCurrentUser,
     profileStats,
     removeFromList,
     restaurants,
@@ -384,6 +391,7 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
   const [shareGroupId, setShareGroupId] = useState('')
   const [isCreateListOpen, setIsCreateListOpen] = useState(false)
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false)
+  const [groupInviteCode, setGroupInviteCode] = useState('')
   const [newListName, setNewListName] = useState('')
   const [passwordForm, setPasswordForm] = useState(INITIAL_PASSWORD_FORM)
   const [status, setStatus] = useState({ tone: '', message: '' })
@@ -391,6 +399,7 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
   const [shareContext, setShareContext] = useState('private')
   const [shareCount, setShareCount] = useState(5)
   const [isShareLoading, setIsShareLoading] = useState(false)
+  const [isJoinGroupLoading, setIsJoinGroupLoading] = useState(false)
   const [isPasswordSaving, setIsPasswordSaving] = useState(false)
   const [isProfileSocialLoading, setIsProfileSocialLoading] = useState(true)
   const currentUserId = currentUser?.id ?? null
@@ -616,6 +625,30 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
         tone: 'error',
         message: `Error al guardar ❌ — ${error instanceof Error ? error.message : 'No se pudo copiar.'}`,
       })
+    }
+  }
+
+  async function handleJoinGroup(event) {
+    event.preventDefault()
+
+    try {
+      setIsJoinGroupLoading(true)
+      const response = await joinGroupByInviteCode(groupInviteCode)
+      setGroupInviteCode('')
+      setStatus({
+        tone: 'success',
+        message:
+          response.groupMember?.status === 'pending'
+            ? 'Guardado ✅ — Solicitud enviada.'
+            : 'Guardado ✅ — Te has unido al grupo.',
+      })
+    } catch (error) {
+      setStatus({
+        tone: 'error',
+        message: `Error al guardar ❌ — ${error instanceof Error ? error.message : 'No se pudo unir al grupo.'}`,
+      })
+    } finally {
+      setIsJoinGroupLoading(false)
     }
   }
 
@@ -1073,6 +1106,22 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
           />
         ) : null}
 
+        <form className="profile-inline-form" onSubmit={handleJoinGroup}>
+          <label className="field">
+            <span>Unirme con código</span>
+            <input
+              type="text"
+              maxLength="6"
+              value={groupInviteCode}
+              onChange={(event) => setGroupInviteCode(event.target.value.toUpperCase())}
+              placeholder="ABC123"
+            />
+          </label>
+          <button className="primary-button" type="submit" disabled={isJoinGroupLoading}>
+            {isJoinGroupLoading ? 'Cargando...' : 'Unirme al grupo'}
+          </button>
+        </form>
+
         {groupsForCurrentUser.length > 0 ? (
           <div className="list-stack">
             {groupsForCurrentUser.map((group) => {
@@ -1132,6 +1181,31 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
         ) : (
           <p className="community-empty-copy">Todavía no perteneces a ningún grupo.</p>
         )}
+
+        {pendingGroupsForCurrentUser.length > 0 ? (
+          <div className="list-stack">
+            {pendingGroupsForCurrentUser.map((group) => (
+              <article key={group.id} className="surface-card profile-group-card">
+                <div className="profile-group-card__header">
+                  <div>
+                    <strong>{group.nombre}</strong>
+                    <p>{group.tipo} · solicitud pendiente de aprobación</p>
+                  </div>
+                  <span className="status-pill">Pendiente</span>
+                </div>
+                <div className="modal-actions">
+                  <button
+                    className="pill-button"
+                    type="button"
+                    onClick={() => onOpenEntity?.({ type: 'group', id: group.id })}
+                  >
+                    Ver grupo
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : null}
       </article>
 
       <article className="surface-card">
@@ -1367,6 +1441,20 @@ export function ProfileScreen({ onNavigate, onOpenEntity }) {
                   </button>
                 ))}
               </div>
+            </article>
+            <article className="settings-card">
+              <strong>Menú inferior</strong>
+              <p>Oculta los títulos y deja solo los iconos en la navegación principal.</p>
+              <label className="filter-toggle">
+                <input
+                  type="checkbox"
+                  checked={hideBottomNavLabels}
+                  onChange={(event) =>
+                    onHideBottomNavLabelsChange?.(event.target.checked)
+                  }
+                />
+                <span>Ocultar títulos del menú</span>
+              </label>
             </article>
             <article className="settings-card">
               <strong>Exportar CSV</strong>

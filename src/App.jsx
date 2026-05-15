@@ -6,8 +6,9 @@ import { ToastCenter } from './components/feedback/ToastCenter.jsx'
 import { BottomNav } from './components/layout/BottomNav.jsx'
 import { FloatingActionButton } from './components/layout/FloatingActionButton.jsx'
 import { ModalSheet } from './components/layout/ModalSheet.jsx'
+import { usePersistentState } from './hooks/usePersistentState.js'
 import { fetchPublicShare } from './lib/api.js'
-import { NAV_ITEMS } from './lib/constants.js'
+import { NAV_ITEMS, STORAGE_KEYS } from './lib/constants.js'
 import { useAppState } from './hooks/useAppState.js'
 
 const EntityDetailSheet = lazy(() =>
@@ -106,7 +107,11 @@ function writeNavigationState(nextScreen, shareToken = '') {
     params.delete('share')
   }
 
-  params.delete('screen')
+  if (normalizedScreen && normalizedScreen !== 'home' && normalizedScreen !== 'report') {
+    params.set('screen', normalizedScreen)
+  } else {
+    params.delete('screen')
+  }
 
   const nextQuery = params.toString()
   const nextPath = normalizedScreen === 'report' ? '/informe' : '/'
@@ -126,6 +131,10 @@ function ScreenFallback({ message = 'Cargando...' }) {
 
 function App() {
   const [activeScreen, setActiveScreen] = useState(readNavigationState().activeScreen)
+  const [hideBottomNavLabels, setHideBottomNavLabels] = usePersistentState(
+    STORAGE_KEYS.hideBottomNavLabels,
+    false,
+  )
   const [isDishWizardOpen, setIsDishWizardOpen] = useState(false)
   const [isRestaurantFormOpen, setIsRestaurantFormOpen] = useState(false)
   const [isSearchOpen, setIsSearchOpen] = useState(false)
@@ -144,9 +153,7 @@ function App() {
   const isPublicShareView = activeScreen === 'report' && Boolean(shareToken)
   const requiresAuth = !isPublicShareView
   const shouldShowAuthScreen = requiresAuth && authChecked && !currentUser
-  const isHomeScreen = activeScreen === 'home'
-  const showTopbar = Boolean(currentUser) && isHomeScreen && !shareToken
-
+  const canRenderAuthenticatedShell = Boolean(currentUser) && !shareToken
   function handleScreenChange(nextScreen) {
     const normalizedScreen = normalizeScreenId(nextScreen)
 
@@ -208,11 +215,13 @@ function App() {
     if (activeScreen === 'map') {
       return (
         <MapScreen
+          hideBottomNavLabels={hideBottomNavLabels}
           onCreateRestaurantAtLocation={(location) => {
             setRestaurantDraftLocation(location)
             setIsRestaurantFormOpen(true)
           }}
           onNavigate={handleScreenChange}
+          onHideBottomNavLabelsChange={setHideBottomNavLabels}
           onOpenEntity={openEntityDetail}
         />
       )
@@ -222,21 +231,25 @@ function App() {
     if (activeScreen === 'rankings') {
       return (
         <ActiveScreen
+          hideBottomNavLabels={hideBottomNavLabels}
           onOpenReport={(nextReportConfig) => {
             setReportConfig(nextReportConfig)
             setActiveScreen('report')
             writeNavigationState('report')
           }}
+          onHideBottomNavLabelsChange={setHideBottomNavLabels}
         />
       )
     }
 
     return (
       <ActiveScreen
+        hideBottomNavLabels={hideBottomNavLabels}
         onNavigate={handleScreenChange}
         onOpenAddDish={() => setIsDishWizardOpen(true)}
         onOpenEntity={openEntityDetail}
         onOpenSearch={() => setIsSearchOpen(true)}
+        onHideBottomNavLabelsChange={setHideBottomNavLabels}
       />
     )
   }
@@ -311,25 +324,8 @@ function App() {
 
   return (
     <div className="app-shell">
-      {showTopbar ? (
-        <header className={`topbar${isHomeScreen ? ' topbar--home' : ''}`}>
-          <button
-            className="shell-search-bar"
-            type="button"
-            aria-label="Buscar restaurantes, platos o perfiles"
-            onClick={() => setIsSearchOpen(true)}
-          >
-            <span className="shell-search-bar__placeholder">
-              Restaurantes, platos, usuarios...
-            </span>
-          </button>
-        </header>
-      ) : null}
-
       <main
-        className={`screen-container${
-          isHomeScreen && !shareToken ? ' screen-container--with-floating-search' : ''
-        }${shouldShowAuthScreen ? ' screen-container--auth' : ''}`}
+        className={`screen-container${shouldShowAuthScreen ? ' screen-container--auth' : ''}`}
       >
         {loadError && !shouldShowAuthScreen ? (
           <StatusBanner
@@ -353,7 +349,7 @@ function App() {
         </Suspense>
       </main>
 
-      {!shareToken && currentUser ? (
+      {canRenderAuthenticatedShell ? (
         <>
           <FloatingActionButton
             label="Añadir plato rápido"
@@ -361,6 +357,7 @@ function App() {
           />
           <BottomNav
             activeId={activeNavItem.id}
+            hideLabels={hideBottomNavLabels}
             items={NAV_ITEMS}
             onChange={handleScreenChange}
           />

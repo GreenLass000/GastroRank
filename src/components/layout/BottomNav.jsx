@@ -1,6 +1,9 @@
-export function BottomNav({ activeId, items, onChange }) {
+export function BottomNav({ activeId, hideLabels = false, items, onChange }) {
   return (
-    <nav className="bottom-nav" aria-label="Navegación principal">
+    <nav
+      className={`bottom-nav${hideLabels ? ' bottom-nav--icons-only' : ''}`}
+      aria-label="Navegación principal"
+    >
       {items.map((item) => {
         const isActive = item.id === activeId
 
@@ -11,11 +14,12 @@ export function BottomNav({ activeId, items, onChange }) {
             type="button"
             onClick={() => onChange(item.id)}
             aria-current={isActive ? 'page' : undefined}
+            aria-label={item.label}
           >
             <span className="bottom-nav__icon" aria-hidden="true">
               {item.icon}
             </span>
-            <span className="bottom-nav__label">{item.label}</span>
+            {!hideLabels ? <span className="bottom-nav__label">{item.label}</span> : null}
           </button>
         )
       })}

@@ -9,6 +9,7 @@ import { FilterBar } from '../components/community/FilterBar.jsx'
 import { Pagination } from '../components/community/Pagination.jsx'
 import { ParaTiSection } from '../components/community/ParaTiSection.jsx'
 import { GroupForm } from '../components/forms/GroupForm.jsx'
+import { useScreenQueryState } from '../hooks/useScreenQueryState.js'
 import { fetchCommunityFeed } from '../lib/api.js'
 import { useAppState } from '../hooks/useAppState.js'
 
@@ -18,6 +19,57 @@ const DEFAULT_FILTERS = {
   priceRange: [],
   minScore: null,
   datePreset: '',
+}
+
+const COMMUNITY_QUERY_SCHEMA = {
+  tab: {
+    queryKey: 'cm_tab',
+    defaultValue: 'amigos',
+    parse: (value) => (value === 'explorar' || value === 'amigos' ? value : 'amigos'),
+  },
+  page: {
+    queryKey: 'cm_page',
+    defaultValue: 1,
+    parse: (value) => {
+      const parsed = Number.parseInt(value, 10)
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : 1
+    },
+  },
+  categoryIds: {
+    queryKey: 'cm_cat',
+    defaultValue: [],
+    parse: (value) => value.split(',').filter(Boolean),
+    serialize: (value) => value.join(','),
+    shouldPersist: (value) => value.length > 0,
+  },
+  dishTypeIds: {
+    queryKey: 'cm_type',
+    defaultValue: [],
+    parse: (value) => value.split(',').filter(Boolean),
+    serialize: (value) => value.join(','),
+    shouldPersist: (value) => value.length > 0,
+  },
+  priceRange: {
+    queryKey: 'cm_price',
+    defaultValue: [],
+    parse: (value) => value.split(',').filter(Boolean),
+    serialize: (value) => value.join(','),
+    shouldPersist: (value) => value.length > 0,
+  },
+  minScore: {
+    queryKey: 'cm_score',
+    defaultValue: null,
+    parse: (value) => {
+      const parsed = Number.parseInt(value, 10)
+      return Number.isFinite(parsed) ? parsed : null
+    },
+    shouldPersist: (value) => value != null,
+  },
+  datePreset: {
+    queryKey: 'cm_date',
+    defaultValue: '',
+    shouldPersist: (value) => Boolean(value),
+  },
 }
 
 function buildDateRange(datePreset) {
@@ -157,9 +209,7 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
     users,
     pendingGroupsForCurrentUser,
   } = useAppState()
-  const [tab, setTab] = useState('amigos')
-  const [page, setPage] = useState(1)
-  const [filters, setFilters] = useState(DEFAULT_FILTERS)
+  const [queryState, setQueryState] = useScreenQueryState(COMMUNITY_QUERY_SCHEMA)
   const [feedState, setFeedState] = useState({
     entries: [],
     page: 1,
@@ -181,6 +231,18 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
   const [pendingGroupId, setPendingGroupId] = useState('')
   const [selectedUserByGroupId, setSelectedUserByGroupId] = useState({})
   const [groupStatusById, setGroupStatusById] = useState({})
+  const { tab, page, categoryIds, dishTypeIds, priceRange, minScore, datePreset } =
+    queryState
+  const filters = useMemo(
+    () => ({
+      categoryIds,
+      dishTypeIds,
+      priceRange,
+      minScore,
+      datePreset,
+    }),
+    [categoryIds, datePreset, dishTypeIds, minScore, priceRange],
+  )
   const hasActiveCommunityFilters = useMemo(
     () =>
       filters.categoryIds.length > 0 ||
@@ -359,8 +421,10 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
   }, [loadComments, selectedEntry])
 
   function resetFilters() {
-    setFilters(DEFAULT_FILTERS)
-    setPage(1)
+    setQueryState({
+      ...DEFAULT_FILTERS,
+      page: 1,
+    })
   }
 
   async function ensureDefaultList() {
@@ -778,8 +842,7 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
           className={`community-screen__subtab${tab === 'explorar' ? ' community-screen__subtab--active' : ''}`}
           type="button"
           onClick={() => {
-            setTab('explorar')
-            setPage(1)
+            setQueryState({ tab: 'explorar', page: 1 })
           }}
         >
           Explorar
@@ -788,8 +851,7 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
           className={`community-screen__subtab${tab === 'amigos' ? ' community-screen__subtab--active' : ''}`}
           type="button"
           onClick={() => {
-            setTab('amigos')
-            setPage(1)
+            setQueryState({ tab: 'amigos', page: 1 })
           }}
         >
           Amigos
@@ -801,8 +863,10 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
         dishTypes={dishTypes}
         filters={filters}
         onChange={(nextFilters) => {
-          setFilters(nextFilters)
-          setPage(1)
+          setQueryState({
+            ...nextFilters,
+            page: 1,
+          })
         }}
         onReset={resetFilters}
       />
@@ -888,7 +952,7 @@ export function ComunidadScreen({ onOpenEntity, onOpenSearch }) {
       <Pagination
         page={feedState.page}
         totalPages={feedState.totalPages}
-        onChange={setPage}
+        onChange={(nextPage) => setQueryState({ page: nextPage })}
       />
 
       {selectedEntry ? (

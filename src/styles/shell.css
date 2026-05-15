@@ -139,6 +139,14 @@
   font-weight: 800;
 }
 
+.bottom-nav--icons-only .bottom-nav__button {
+  min-height: 56px;
+}
+
+.bottom-nav--icons-only .bottom-nav__icon {
+  font-size: 1.35rem;
+}
+
 .fab {
   right: 18px;
   bottom: 102px;
